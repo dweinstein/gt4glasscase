@@ -1,0 +1,95 @@
+"
+Where an artifact came from: publisher, license, release date, announcement URL, and the mirror/derivation chain from the original publisher to the file on disk.
+"
+Class {
+	#name : 'GcProvenance',
+	#superclass : 'Object',
+	#instVars : [
+		'publisher',
+		'license',
+		'releaseDate',
+		'announcementUrl',
+		'mirrorChain'
+	],
+	#category : 'Gt4GlassCase',
+	#package : 'Gt4GlassCase'
+}
+
+{ #category : 'instance creation' }
+GcProvenance class >> publisher: aPublisher license: aLicense [
+	^ self new
+		publisher: aPublisher;
+		license: aLicense;
+		yourself
+]
+
+{ #category : 'building' }
+GcProvenance >> addMirror: aString [
+	mirrorChain add: aString.
+	^ aString
+]
+
+{ #category : 'accessing' }
+GcProvenance >> announcementUrl [
+	^ announcementUrl
+]
+
+{ #category : 'accessing' }
+GcProvenance >> announcementUrl: aString [
+	announcementUrl := aString
+]
+
+{ #category : 'initialization' }
+GcProvenance >> initialize [
+	super initialize.
+	mirrorChain := OrderedCollection new
+]
+
+{ #category : 'accessing' }
+GcProvenance >> license [
+	^ license
+]
+
+{ #category : 'accessing' }
+GcProvenance >> license: aString [
+	license := aString
+]
+
+{ #category : 'accessing' }
+GcProvenance >> mirrorChain [
+	^ mirrorChain
+]
+
+{ #category : 'accessing' }
+GcProvenance >> mirrorChain: aCollection [
+	mirrorChain := aCollection asOrderedCollection
+]
+
+{ #category : 'printing' }
+GcProvenance >> printOn: aStream [
+	aStream nextPutAll: 'GcProvenance('.
+	aStream nextPutAll: (publisher ifNil: [ '?' ]).
+	aStream nextPutAll: ', '.
+	aStream nextPutAll: (license ifNil: [ '?' ]).
+	aStream nextPut: $)
+]
+
+{ #category : 'accessing' }
+GcProvenance >> publisher [
+	^ publisher
+]
+
+{ #category : 'accessing' }
+GcProvenance >> publisher: aString [
+	publisher := aString
+]
+
+{ #category : 'accessing' }
+GcProvenance >> releaseDate [
+	^ releaseDate
+]
+
+{ #category : 'accessing' }
+GcProvenance >> releaseDate: aDate [
+	releaseDate := aDate
+]

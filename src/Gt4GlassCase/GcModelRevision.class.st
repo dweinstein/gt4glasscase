@@ -7,7 +7,8 @@ Class {
 	#instVars : [
 		'family',
 		'repositoryId',
-		'commitSha'
+		'commitSha',
+		'provenance'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -61,6 +62,16 @@ GcModelRevision >> printOn: aStream [
 	aStream nextPutAll: 'GcModelRevision('.
 	aStream nextPutAll: self id.
 	aStream nextPut: $)
+]
+
+{ #category : 'accessing' }
+GcModelRevision >> provenance [
+	^ provenance
+]
+
+{ #category : 'accessing' }
+GcModelRevision >> provenance: aProvenance [
+	provenance := aProvenance
 ]
 
 { #category : 'accessing' }
