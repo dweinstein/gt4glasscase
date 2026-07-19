@@ -73,6 +73,17 @@ GcTensorGroup >> gtByModuleFor: aView [
 		send: [ :assoc | assoc value ]
 ]
 
+{ #category : 'gt search' }
+GcTensorGroup >> gtSearchTensorsFor: aSearch [
+	<gtSearch>
+	^ aSearch list
+		title: 'Tensors';
+		priority: 10;
+		items: [ self items ];
+		itemName: [ :t | t name ];
+		filterBySubstring
+]
+
 { #category : 'views' }
 GcTensorGroup >> gtShapeTableFor: aView [
 	<gtView>

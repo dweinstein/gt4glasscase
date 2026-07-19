@@ -1,5 +1,5 @@
 "
-A vocabulary token rare or absent in training (glitch-token family): anomalous embedding norm, a natural trigger candidate.
+A token suspected undertrained on embedding-norm evidence (needs weights). Intended to wrap a GcVocabToken — an undertrained token IS a vocab token plus an anomaly verdict — rather than re-model id and text; GcVocabToken carries the metadata-only anomaly flags.
 "
 Class {
 	#name : 'GcUndertrainedToken',

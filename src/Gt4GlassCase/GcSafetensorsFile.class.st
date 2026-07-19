@@ -41,6 +41,19 @@ GcSafetensorsFile >> byteDataOffset: anInteger [
 	byteDataOffset := anInteger
 ]
 
+{ #category : 'slack space' }
+GcSafetensorsFile >> byteSegments [
+	| segments startOf |
+	startOf := [ :segment |
+		(segment isKindOf: GcSlackRange)
+			ifTrue: [ segment start ]
+			ifFalse: [ segment beginOffset ] ].
+	segments := OrderedCollection new.
+	segments addAll: self sortedTensorExtents.
+	segments addAll: self slackRanges.
+	^ (segments asSortedCollection: [ :a :b | (startOf value: a) <= (startOf value: b) ]) asArray
+]
+
 { #category : 'views' }
 GcSafetensorsFile >> gtSkylineFor: aView [
 	"The model skyline (forwarded to the tensor group)."
@@ -50,6 +63,58 @@ GcSafetensorsFile >> gtSkylineFor: aView [
 		priority: 3;
 		object: [ self tensorGroup ];
 		view: #gtSkylineFor:
+]
+
+{ #category : 'views' }
+GcSafetensorsFile >> gtSlackMapFor: aView [
+	<gtView>
+	"Are there byte ranges in this shard claimed by no tensor - gaps, overlaps, or trailing slack? Wrapped rows read like a defragmenter byte map: blue = tensor, red = gap, dark purple = overlap."
+	^ aView mondrian
+		title: 'Slack map';
+		priority: 8;
+		painting: [ :m |
+			| totalSpan extents |
+			extents := self sortedTensorExtents.
+			totalSpan := extents isEmpty
+				ifTrue: [ 1 ]
+				ifFalse: [ extents last endOffset max: 1 ].
+			m nodes
+				stencil: [ :segment |
+					| width color |
+					width := ((segment byteSize / totalSpan) * 900) rounded max: 2.
+					color := (segment isKindOf: GcSlackRange)
+						ifTrue: [
+							segment kind = #gap
+								ifTrue: [ Color r: 0.85 g: 0.25 b: 0.2 ]
+								ifFalse: [ Color r: 0.5 g: 0.15 b: 0.5 ] ]
+						ifFalse: [ Color r: 0.55 g: 0.65 b: 0.8 ].
+					BlElement new
+						background: color;
+						size: width @ 22;
+						yourself ];
+				with: self byteSegments.
+			m layout grid ]
+]
+
+{ #category : 'gt views' }
+GcSafetensorsFile >> gtSlackRangesFor: aView [
+	<gtView>
+	"Are there byte ranges in this shard claimed by no tensor - gaps, overlaps, or trailing slack? Exact byte offsets and sizes for each unclaimed range."
+	^ aView columnedList
+		title: 'Slack ranges';
+		priority: 9;
+		items: [
+			self slackRanges isEmpty
+				ifTrue: [
+					{ {'no unclaimed bytes'.
+						'all ' , self tensorCount printString , ' tensors tile the data area exactly'.
+						self} } ]
+				ifFalse: [
+					self slackRanges collect: [ :range |
+						{range kind asString. range printString. range} ] ] ];
+		column: 'Status' text: [ :row | row at: 1 ];
+		column: 'Detail' text: [ :row | row at: 2 ];
+		send: [ :row | row at: 3 ]
 ]
 
 { #category : 'views' }
@@ -122,6 +187,27 @@ GcSafetensorsFile >> printOn: aStream [
 	aStream nextPutAll: ', '.
 	aStream print: self tensorCount.
 	aStream nextPutAll: ' tensors)'
+]
+
+{ #category : 'slack space' }
+GcSafetensorsFile >> slackRanges [
+	"Walks tensor extents in offset order accumulating gaps and overlaps. Trailing slack after the last tensor is not computable from metadata alone - the total file size is unknown here - so it is not reported."
+	| cursor result |
+	cursor := 0.
+	result := OrderedCollection new.
+	self sortedTensorExtents do: [ :tensor |
+		tensor beginOffset > cursor
+			ifTrue: [ result add: (GcSlackRange kind: #gap start: cursor end: tensor beginOffset) ].
+		tensor beginOffset < cursor
+			ifTrue: [ result add: (GcSlackRange kind: #overlap start: tensor beginOffset end: (cursor min: tensor endOffset)) ].
+		cursor := cursor max: tensor endOffset ].
+	^ result
+]
+
+{ #category : 'slack space' }
+GcSafetensorsFile >> sortedTensorExtents [
+	^ (((tensors ifNil: [ #() ]) select: [ :each | each beginOffset notNil and: [ each endOffset notNil ] ])
+		asSortedCollection: [ :a :b | a beginOffset <= b beginOffset ]) asArray
 ]
 
 { #category : 'views' }

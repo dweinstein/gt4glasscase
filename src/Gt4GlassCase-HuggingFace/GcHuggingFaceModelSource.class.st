@@ -71,6 +71,17 @@ GcHuggingFaceModelSource >> fileInfo: aFileName [
 ]
 
 { #category : 'views' }
+GcHuggingFaceModelSource >> gtAnomalousTokensFor: aView [
+	<gtView>
+	"Which of this model's tokens look like trigger candidates?"
+	^ aView forward
+		title: 'Odd tokens';
+		priority: 8;
+		object: [ self tokenGroup ];
+		view: #gtAnomalousFor:
+]
+
+{ #category : 'views' }
 GcHuggingFaceModelSource >> gtArchitectureFor: aView [
 	"The model architecture. Fetches config.json the first time this tab is opened (then cached)."
 	<gtView>
@@ -79,6 +90,51 @@ GcHuggingFaceModelSource >> gtArchitectureFor: aView [
 		priority: 3;
 		object: [ self architecture ];
 		view: #gtOverviewFor:
+]
+
+{ #category : 'views' }
+GcHuggingFaceModelSource >> gtDeadWeightsFor: aView [
+	<gtView>
+	"Are there tensors in the file that the architecture never references - and are any expected tensors missing?"
+	^ aView columnedList
+		title: 'Dead weights';
+		priority: 7;
+		items: [
+			| analysis unreferenced missing matchedCount rows |
+			analysis := self architecture deadWeightAnalysisOn: self tensorGroup.
+			unreferenced := analysis at: #unreferenced.
+			missing := analysis at: #missing.
+			matchedCount := analysis at: #matchedCount.
+			rows := OrderedCollection new.
+			(unreferenced isEmpty and: [ missing isEmpty ])
+				ifTrue: [
+					rows add: {'all accounted for'.
+						'all ' , matchedCount printString , ' tensors matched the architecture template'.
+						self} ]
+				ifFalse: [
+					unreferenced do: [ :ref |
+						rows add: {'unreferenced in file'. ref name. ref} ].
+					missing do: [ :eachName |
+						rows add: {'missing from file'. eachName. eachName} ] ].
+			rows ];
+		column: 'Status' text: [ :row | row at: 1 ];
+		column: 'Tensor' text: [ :row | row at: 2 ];
+		send: [ :row | row at: 3 ]
+]
+
+{ #category : 'gt actions' }
+GcHuggingFaceModelSource >> gtOddTokensActionFor: anAction [
+	<gtAction>
+	^ anAction button
+		tooltip: 'Fetch tokenizer.json over HTTP, then open the anomalous-token group';
+		priority: 25;
+		icon: BrGlamorousVectorIcons inspect;
+		action: [ :aButton |
+			[ | group |
+			group := self tokenGroup.
+			aButton enqueueTask: (BlTaskAction new action: [
+				aButton phlow spawnObject: group ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
 { #category : 'views' }
@@ -208,4 +264,16 @@ GcHuggingFaceModelSource >> tensorGroup [
 { #category : 'convenience' }
 GcHuggingFaceModelSource >> tensorTree [
 	^ self safetensorsFile tensorTree
+]
+
+{ #category : 'accessing' }
+GcHuggingFaceModelSource >> tokenGroup [
+	"Fetches tokenizer.json once (a few MB over HTTP) and computes anomalous-token metadata from vocab + merges alone, no embeddings or inference."
+	| dict model vocab merges specials |
+	dict := client getJson: (client resolveUrlFor: repositoryId file: 'tokenizer.json').
+	model := dict at: 'model' ifAbsent: [ Dictionary new ].
+	vocab := model at: 'vocab' ifAbsent: [ Dictionary new ].
+	merges := model at: 'merges' ifAbsent: [ #() ].
+	specials := (dict at: 'added_tokens' ifAbsent: [ #() ]) collect: [ :t | t at: 'content' ifAbsent: [ '' ] ].
+	^ GcTokenGroup fromVocabulary: vocab merges: merges specialTokens: specials
 ]

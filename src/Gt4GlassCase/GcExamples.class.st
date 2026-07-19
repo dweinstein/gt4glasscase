@@ -8,6 +8,50 @@ Class {
 	#package : 'Gt4GlassCase'
 }
 
+{ #category : 'examples - architecture compare' }
+GcExamples >> architectureComparisonMarksDifference [
+	<gtExample>
+	| a b comparison rows layersRow |
+	a := GcArchitecture new numLayers: 30; numHeads: 9; hiddenSize: 576; yourself.
+	b := GcArchitecture new numLayers: 32; numHeads: 9; hiddenSize: 576; yourself.
+	comparison := GcArchitectureComparison forAll: { 'base' -> a. 'finetune' -> b }.
+	rows := comparison facetRows.
+	layersRow := rows detect: [ :r | (r at: 1) = 'Layers' ].
+	self assert: (layersRow at: 3) equals: false.
+	self assert: comparison labels equals: #('base' 'finetune').
+	^ comparison
+]
+
+{ #category : 'examples - dead weights' }
+GcExamples >> architectureDeadWeightsCleanModel [
+	<gtExample>
+	| arch group analysis |
+	arch := GcArchitecture new numLayers: 2; yourself.
+	group := GcTensorGroup new.
+	arch expectedTensorNames do: [ :n | group addItem: (GcTensorRef name: n dtype: #bf16 shape: #(4 4)) ].
+	analysis := arch deadWeightAnalysisOn: group.
+	self assert: (analysis at: #unreferenced) isEmpty.
+	self assert: (analysis at: #missing) isEmpty.
+	self assert: (analysis at: #matchedCount) equals: group size.
+	^ analysis
+]
+
+{ #category : 'examples - dead weights' }
+GcExamples >> architectureDeadWeightsFindsImplantAndMissing [
+	<gtExample>
+	| arch group analysis |
+	arch := GcArchitecture new numLayers: 2; yourself.
+	group := GcTensorGroup new.
+	arch expectedTensorNames do: [ :n |
+		n = 'model.norm.weight' ifFalse: [ group addItem: (GcTensorRef name: n dtype: #bf16 shape: #(4 4)) ] ].
+	group addItem: (GcTensorRef name: 'model.layers.1.mlp.implant.weight' dtype: #bf16 shape: #(4 4)).
+	analysis := arch deadWeightAnalysisOn: group.
+	self assert: (analysis at: #unreferenced) size equals: 1.
+	self assert: (analysis at: #unreferenced) first name equals: 'model.layers.1.mlp.implant.weight'.
+	self assert: (analysis at: #missing) equals: { 'model.norm.weight' }.
+	^ analysis
+]
+
 { #category : 'examples-groups' }
 GcExamples >> artifactGroupPartitionByPrecision [
 	<gtExample>
@@ -73,6 +117,47 @@ GcExamples >> artifactSliceByPrecision [
 	self assert: slice cohorts size equals: 1.
 	self assert: slice cohorts anyOne size equals: 3.
 	^ slice
+]
+
+{ #category : 'examples - coverage' }
+GcExamples >> campaignPlanCoverage [
+	<gtExample>
+	| coords plan campaign |
+	coords := OrderedCollection new.
+	#(bf16 int8) do: [ :prec |
+		#(p1 p2) do: [ :probe |
+			coords add: (GcCoordinate new at: #precision put: prec; at: #probe put: probe; yourself) ] ].
+	plan := GcCampaignPlan new plannedCoordinates: coords; yourself.
+	campaign := GcCampaign new name: 'pilot'; plan: plan; yourself.
+	self assert: campaign plannedCoordinates size equals: 4.
+	self assert: campaign printString equals: 'campaign pilot (4 planned coordinates)'.
+	^ campaign
+]
+
+{ #category : 'examples - small multiples' }
+GcExamples >> comparisonSideBySideRows [
+	<gtExample>
+	| comparison rows |
+	comparison := self groupComparisonSharedAndUnique.
+	rows := comparison sideBySideRows.
+	self assert: (rows first at: 1) equals: 'Items'.
+	self assert: ((rows second at: 5) isKindOf: GcGroup).
+	self assert: (rows second at: 5) size equals: 1.
+	^ rows
+]
+
+{ #category : 'examples' }
+GcExamples >> comparisonSwapMirrorsSides [
+	<gtExample>
+	| comparison swapped |
+	comparison := self groupComparisonSharedAndUnique.
+	swapped := GcGroupComparison left: comparison right right: comparison left.
+	self assert: swapped left == comparison right.
+	self assert: swapped right == comparison left.
+	self assert: swapped onlyInLeft size equals: comparison onlyInRight size.
+	self assert: swapped onlyInRight size equals: comparison onlyInLeft size.
+	self assert: swapped inBoth size equals: comparison inBoth size.
+	^ swapped
 ]
 
 { #category : 'examples-groups' }
@@ -160,6 +245,19 @@ GcExamples >> groupOutliersByByteSize [
 	^ outliers
 ]
 
+{ #category : 'examples - small multiples' }
+GcExamples >> groupSmallMultiplesRendersCohorts [
+	<gtExample>
+	| partitions stencil context cell |
+	partitions := self tensorGroupPartitionByModule.
+	stencil := GcCohortStencil default.
+	context := stencil contextFor: partitions.
+	self assert: (context at: #max) >= 1.0.
+	cell := stencil elementFor: partitions items first context: context.
+	self assert: (cell isKindOf: BlElement).
+	^ partitions
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> manifestDriftDetectsTampering [
 	<gtExample>
@@ -182,6 +280,32 @@ GcExamples >> manifestDriftIsEmpty [
 	b := self manifestQwen3.
 	self assert: (a driftFrom: b) isEmpty.
 	^ a
+]
+
+{ #category : 'examples - manifest drift' }
+GcExamples >> manifestDriftReportFindsSilentReupload [
+	<gtExample>
+	| clean tampered report |
+	clean := self manifestQwen3.
+	tampered := GcRepoManifest revision: self revisionQwen3_32b.
+	tampered addFile: (GcFileDigest path: 'config.json' size: 812 sha256: 'aaaa1111bbbb2222').
+	tampered addFile: (GcFileDigest path: 'model.safetensors.index.json' size: 42318 sha256: 'deadbeefdeadbeef').
+	report := tampered driftReportFrom: clean.
+	self assert: report isClean not.
+	self assert: report changedFiles size equals: 1.
+	self assert: report addedFiles isEmpty.
+	self assert: report removedFiles isEmpty.
+	^ report
+]
+
+{ #category : 'examples - manifest drift' }
+GcExamples >> manifestDriftReportIsCleanForIdenticalSnapshots [
+	<gtExample>
+	| report |
+	report := self manifestQwen3 driftReportFrom: self manifestQwen3.
+	self assert: report isClean.
+	self assert: report printString equals: 'clean drift (2 files)'.
+	^ report
 ]
 
 { #category : 'examples-provenance' }
@@ -250,6 +374,39 @@ GcExamples >> revisionWithProvenance [
 	^ revision
 ]
 
+{ #category : 'examples - slack space' }
+GcExamples >> safetensorsSlackGapAndOverlap [
+	<gtExample>
+	| h file ranges |
+	h := Dictionary new.
+	h at: 'a' put: (Dictionary new at: 'dtype' put: 'F32'; at: 'shape' put: #(2 2); at: 'data_offsets' put: #(0 16); yourself).
+	h at: 'b' put: (Dictionary new at: 'dtype' put: 'F32'; at: 'shape' put: #(2 2); at: 'data_offsets' put: #(32 64); yourself).
+	h at: 'c' put: (Dictionary new at: 'dtype' put: 'F32'; at: 'shape' put: #(2 2); at: 'data_offsets' put: #(48 80); yourself).
+	file := GcSafetensorsFile new.
+	file path: 'example-slack'.
+	file parseHeaderDictionary: h.
+	ranges := file slackRanges.
+	self assert: ranges size equals: 2.
+	self assert: ranges first kind equals: #gap.
+	self assert: ranges first byteSize equals: 16.
+	self assert: (ranges at: 2) kind equals: #overlap.
+	^ file
+]
+
+{ #category : 'examples - slack space' }
+GcExamples >> safetensorsTightFileHasNoSlack [
+	<gtExample>
+	| h file |
+	h := Dictionary new.
+	h at: 'a' put: (Dictionary new at: 'dtype' put: 'F32'; at: 'shape' put: #(2 2); at: 'data_offsets' put: #(0 16); yourself).
+	h at: 'b' put: (Dictionary new at: 'dtype' put: 'F32'; at: 'shape' put: #(2 2); at: 'data_offsets' put: #(16 32); yourself).
+	file := GcSafetensorsFile new.
+	file path: 'example-tight'.
+	file parseHeaderDictionary: h.
+	self assert: file slackRanges isEmpty.
+	^ file
+]
+
 { #category : 'examples-groups' }
 GcExamples >> tensorGroupPartitionByModule [
 	<gtExample>
@@ -277,6 +434,74 @@ GcExamples >> tensorNameParsesMoe [
 	^ name
 ]
 
+{ #category : 'examples - twin check' }
+GcExamples >> tensorTwinCheckAcceptsPrecisionPair [
+	<gtExample>
+	| leftG rightG comparison |
+	leftG := GcTensorGroup new.
+	leftG addItem: (GcTensorRef name: 'x.weight' dtype: #bf16 shape: #(4 4)).
+	leftG addItem: (GcTensorRef name: 'y.weight' dtype: #bf16 shape: #(8 4)).
+	rightG := GcTensorGroup new.
+	rightG addItem: (GcTensorRef name: 'x.weight' dtype: #int8 shape: #(4 4)).
+	rightG addItem: (GcTensorRef name: 'y.weight' dtype: #int8 shape: #(8 4)).
+	comparison := leftG compareTo: rightG.
+	self assert: (comparison twinCheckVerdict beginsWith: 'structural twins').
+	^ comparison
+]
+
+{ #category : 'examples - twin check' }
+GcExamples >> tensorTwinCheckDetectsMismatch [
+	<gtExample>
+	| leftG rightG comparison |
+	leftG := GcTensorGroup new.
+	leftG addItem: (GcTensorRef name: 'x.weight' dtype: #bf16 shape: #(4 4)).
+	leftG addItem: (GcTensorRef name: 'y.weight' dtype: #bf16 shape: #(4 4)).
+	rightG := GcTensorGroup new.
+	rightG addItem: (GcTensorRef name: 'x.weight' dtype: #int8 shape: #(4 4)).
+	rightG addItem: (GcTensorRef name: 'y.weight' dtype: #int8 shape: #(4 2)).
+	comparison := leftG compareTo: rightG.
+	self assert: (comparison twinCheckVerdict beginsWith: 'NOT twins').
+	self assert: ((comparison twinCheckRows collect: [ :r | r at: 1 ]) includes: #shapeMismatch).
+	^ comparison
+]
+
+{ #category : 'examples' }
+GcExamples >> tokenGroupAnomalousOnlyDerivation [
+	<gtExample>
+	| group anomalous |
+	group := self tokenGroupFlagsTriggerCandidates.
+	anomalous := group withItems: group anomalousTokens derivedBy: #anomalous.
+	self assert: (anomalous isKindOf: GcTokenGroup).
+	self assert: anomalous size equals: group anomalousTokens size.
+	self assert: anomalous size equals: 4.
+	self assert: (anomalous items allSatisfy: [ :t | t isAnomalous ]).
+	self assert: anomalous derivation operation equals: #anomalous.
+	^ anomalous
+]
+
+{ #category : 'examples - token lens' }
+GcExamples >> tokenGroupFlagsTriggerCandidates [
+	<gtExample>
+	| vocab merges specials group magikarp |
+	vocab := Dictionary new.
+	vocab at: 'h' put: 1.
+	vocab at: 'e' put: 2.
+	vocab at: 'hello' put: 3.
+	vocab at: 'SolidGoldMagikarp' put: 4.
+	vocab at: '<0x0A>' put: 5.
+	vocab at: '<|reserved_42|>' put: 6.
+	vocab at: '<|endoftext|>' put: 7.
+	merges := { 'he llo' }.
+	specials := { '<|endoftext|>' }.
+	group := GcTokenGroup fromVocabulary: vocab merges: merges specialTokens: specials.
+	self assert: group size equals: 7.
+	self assert: group anomalousTokens size equals: 4.
+	magikarp := group items detect: [ :t | t tokenId = 4 ].
+	self assert: (magikarp hasFlag: #unreachable).
+	self assert: (group statistics at: #anomalous) equals: 4.
+	^ group
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> tokenizerSketch [
 	<gtExample>
@@ -284,4 +509,20 @@ GcExamples >> tokenizerSketch [
 	tok := GcTokenizer vocabSize: 151936.
 	self assert: tok vocabSize equals: 151936.
 	^ tok
+]
+
+{ #category : 'examples' }
+GcExamples >> vocabTokenDetailFacets [
+	<gtExample>
+	| token facets |
+	token := GcVocabToken id: 42 text: 'SolidGoldMagikarp'.
+	token addFlag: #unreachable.
+	facets := token detailFacets.
+	self assert: (facets collect: [ :assoc | assoc key ]) asArray
+		equals: #('Id' 'Text' 'Rendered' 'UTF-8 bytes' 'Length' 'Flags').
+	self assert: (facets detect: [ :assoc | assoc key = 'Id' ]) value equals: 42.
+	self assert: (facets detect: [ :assoc | assoc key = 'Length' ]) value equals: 17.
+	self assert: ((facets detect: [ :assoc | assoc key = 'Flags' ]) value includesSubstring: 'unreachable').
+	self assert: token isAnomalous.
+	^ token
 ]

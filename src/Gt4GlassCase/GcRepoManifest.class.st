@@ -43,6 +43,12 @@ GcRepoManifest >> driftFrom: anotherManifest [
 		prior isNil or: [ prior sha256 ~= f sha256 ] ]
 ]
 
+{ #category : 'comparing' }
+GcRepoManifest >> driftReportFrom: aBaselineManifest [
+	"Answer a first-class drift report comparing self (current) against aBaselineManifest (the earlier snapshot). Keep driftFrom: for the raw changed-file list."
+	^ GcManifestDrift baseline: aBaselineManifest current: self
+]
+
 { #category : 'querying' }
 GcRepoManifest >> fileCount [
 	^ files size
