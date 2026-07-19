@@ -42,6 +42,17 @@ GcSafetensorsFile >> byteDataOffset: anInteger [
 ]
 
 { #category : 'views' }
+GcSafetensorsFile >> gtSkylineFor: aView [
+	"The model skyline (forwarded to the tensor group)."
+	<gtView>
+	^ aView forward
+		title: 'Skyline';
+		priority: 3;
+		object: [ self tensorGroup ];
+		view: #gtSkylineFor:
+]
+
+{ #category : 'views' }
 GcSafetensorsFile >> gtSummaryFor: aView [
 	"What does this safetensors file contain, overall? Clicking 'Tensors' navigates into the tensor group."
 	<gtView>
@@ -63,6 +74,17 @@ GcSafetensorsFile >> gtTensorsFor: aView [
 		priority: 2;
 		object: [ self tensorGroup ];
 		view: #gtShapeTableFor:
+]
+
+{ #category : 'views' }
+GcSafetensorsFile >> gtTreeFor: aView [
+	"The tensor-name hierarchy (HuggingFace-style file tree)."
+	<gtView>
+	^ aView forward
+		title: 'Tree';
+		priority: 2;
+		object: [ self tensorTree ];
+		view: #gtTreeFor:
 ]
 
 { #category : 'accessing' }
@@ -125,6 +147,11 @@ GcSafetensorsFile >> tensorCount [
 GcSafetensorsFile >> tensorGroup [
 	"A GcTensorGroup wrapping every tensor in this file -- ready for partitionBy:, statistics, etc."
 	^ GcTensorGroup withAll: self tensors
+]
+
+{ #category : 'converting' }
+GcSafetensorsFile >> tensorTree [
+	^ self tensorGroup asTensorTree
 ]
 
 { #category : 'accessing' }

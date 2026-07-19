@@ -49,6 +49,17 @@ GcHuggingFaceModelSource >> configFor: aRepoId [
 	^ GcModelConfig fromDictionary: (client config: aRepoId)
 ]
 
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> fileInfo [
+	^ self fileInfo: 'model.safetensors'
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> fileInfo: aFileName [
+	"The safetensors file with its full tensor tree (like HuggingFace's file-info panel). Open the result's Tree view."
+	^ self safetensorsFile: aFileName
+]
+
 { #category : 'initialization' }
 GcHuggingFaceModelSource >> initialize [
 	super initialize.
@@ -126,4 +137,9 @@ GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
 { #category : 'convenience' }
 GcHuggingFaceModelSource >> tensorGroup [
 	^ self safetensorsFile tensorGroup
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> tensorTree [
+	^ self safetensorsFile tensorTree
 ]

@@ -8,6 +8,24 @@ Class {
 	#package : 'Gt4GlassCase'
 }
 
+{ #category : 'converting' }
+GcTensorGroup >> asTensorTree [
+	"Build the tensor-name hierarchy (root GcTensorTreeNode) by splitting each tensor's dotted name."
+	| root |
+	root := GcTensorTreeNode named: '' path: ''.
+	self items do: [ :aTensor |
+		| node parts prefix |
+		node := root.
+		parts := aTensor name substrings: '.'.
+		prefix := ''.
+		parts doWithIndex: [ :seg :i |
+			prefix := prefix isEmpty ifTrue: [ seg ] ifFalse: [ prefix, '.', seg ].
+			i = parts size
+				ifTrue: [ node addChild: (GcTensorTreeNode named: seg path: prefix tensor: aTensor) ]
+				ifFalse: [ node := node childNamed: seg ifAbsentAddPath: prefix ] ] ].
+	^ root
+]
+
 { #category : 'grouping' }
 GcTensorGroup >> byLayer [
 	^ self partitionBy: [ :t | t layerIndex ]
@@ -16,6 +34,15 @@ GcTensorGroup >> byLayer [
 { #category : 'grouping' }
 GcTensorGroup >> byModule [
 	^ self partitionBy: [ :t | t module ]
+]
+
+{ #category : 'views' }
+GcTensorGroup >> colorForBlock: aSymbol [
+	aSymbol = #attention ifTrue: [ ^ Color r: 0.20 g: 0.45 b: 0.80 ].
+	aSymbol = #mlp ifTrue: [ ^ Color r: 0.85 g: 0.45 b: 0.20 ].
+	aSymbol = #embedding ifTrue: [ ^ Color r: 0.25 g: 0.65 b: 0.35 ].
+	aSymbol = #norm ifTrue: [ ^ Color r: 0.60 g: 0.60 b: 0.62 ].
+	^ Color gray
 ]
 
 { #category : 'views' }
@@ -61,6 +88,26 @@ GcTensorGroup >> gtShapeTableFor: aView [
 ]
 
 { #category : 'views' }
+GcTensorGroup >> gtSkylineFor: aView [
+	"Every tensor as a box sized by parameter count and coloured by block (blue attention, orange mlp, green embedding, grey norm). A regular transformer is boringly uniform; an anomaly would break the texture. Click a box to inspect the tensor."
+	<gtView>
+	^ aView mondrian
+		title: 'Skyline';
+		priority: 9;
+		painting: [ :m |
+			m nodes
+				stencil: [ :tensor |
+					| side |
+					side := ((tensor paramCount + 1) sqrt / 44) max: 4.
+					BlElement new
+						background: (self colorForBlock: tensor parsedName block);
+						size: side @ side;
+						yourself ];
+				with: self items.
+			m layout grid ]
+]
+
+{ #category : 'views' }
 GcTensorGroup >> gtStatisticsFor: aView [
 	"Summary metrics for this tensor group."
 	<gtView>
@@ -71,6 +118,17 @@ GcTensorGroup >> gtStatisticsFor: aView [
 		column: 'Metric' text: [ :assoc | assoc key asString ];
 		column: 'Value' text: [ :assoc | assoc value displayString ];
 		send: [ :assoc | assoc value ]
+]
+
+{ #category : 'views' }
+GcTensorGroup >> gtTreeFor: aView [
+	"The tensor-name hierarchy (forwarded to the tree root)."
+	<gtView>
+	^ aView forward
+		title: 'Tree';
+		priority: 4;
+		object: [ self asTensorTree ];
+		view: #gtTreeFor:
 ]
 
 { #category : 'grouping' }

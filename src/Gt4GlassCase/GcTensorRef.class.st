@@ -62,6 +62,12 @@ GcTensorRef >> detailFacets [
 ]
 
 { #category : 'accessing' }
+GcTensorRef >> dimensions [
+	"The raw dimensions array (convenience)."
+	^ shape ifNil: [ #() ] ifNotNil: [ :s | (s isKindOf: GcTensorShape) ifTrue: [ s dimensions ] ifFalse: [ s ] ]
+]
+
+{ #category : 'accessing' }
 GcTensorRef >> dtype [
 	^ dtype
 ]
@@ -85,9 +91,9 @@ GcTensorRef >> dtypeByteWidth [
 { #category : 'numerics' }
 GcTensorRef >> elementCount [
 	"Number of elements = product of the shape dimensions (1 for a scalar)."
-	^ (shape isNil or: [ shape isEmpty ])
-		ifTrue: [ 1 ]
-		ifFalse: [ shape inject: 1 into: [ :product :dim | product * dim ] ]
+	shape isNil ifTrue: [ ^ 1 ].
+	(shape isKindOf: GcTensorShape) ifTrue: [ ^ shape elementCount ].
+	^ shape isEmpty ifTrue: [ 1 ] ifFalse: [ shape inject: 1 into: [ :product :dim | product * dim ] ]
 ]
 
 { #category : 'accessing' }
@@ -166,6 +172,11 @@ GcTensorRef >> shape [
 ]
 
 { #category : 'accessing' }
-GcTensorRef >> shape: aCollection [
-	shape := aCollection
+GcTensorRef >> shape: aShapeOrArray [
+	"Store the shape as a first-class GcTensorShape, wrapping a raw dimensions array if needed."
+	shape := aShapeOrArray isNil
+		ifTrue: [ nil ]
+		ifFalse: [ (aShapeOrArray isKindOf: GcTensorShape)
+			ifTrue: [ aShapeOrArray ]
+			ifFalse: [ GcTensorShape fromArray: aShapeOrArray ] ]
 ]
