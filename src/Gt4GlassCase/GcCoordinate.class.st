@@ -40,14 +40,15 @@ GcCoordinate >> bindings [
 
 { #category : 'views' }
 GcCoordinate >> gtBindingsFor: aView [
-	"Where in the hypercube does this coordinate sit?"
+	"Where in the hypercube does this coordinate sit? Clicking a row sends the bound value."
 	<gtView>
 	^ aView columnedList
 		title: 'Coordinate';
 		priority: 1;
 		items: [ self axes ];
 		column: 'Axis' text: [ :axisName | axisName asString ];
-		column: 'Value' text: [ :axisName | (self at: axisName) printString ]
+		column: 'Value' text: [ :axisName | (self at: axisName) displayString ];
+		send: [ :axisName | self at: axisName ]
 ]
 
 { #category : 'comparing' }

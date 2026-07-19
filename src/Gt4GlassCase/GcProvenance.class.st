@@ -42,11 +42,11 @@ GcProvenance >> announcementUrl: aString [
 { #category : 'views' }
 GcProvenance >> detailFacets [
 	^ {
-		'Publisher' -> (publisher ifNil: [ '-' ]).
-		'License' -> (license ifNil: [ '-' ]).
-		'Release date' -> (releaseDate ifNil: [ '-' ] ifNotNil: [ :d | d printString ]).
-		'Announcement' -> (announcementUrl ifNil: [ '-' ]).
-		'Mirror hops' -> (mirrorChain ifNil: [ #() ]) size printString }
+		'Publisher' -> publisher.
+		'License' -> license.
+		'Release date' -> releaseDate.
+		'Announcement' -> announcementUrl.
+		'Mirror chain' -> mirrorChain }
 ]
 
 { #category : 'views' }
@@ -58,7 +58,8 @@ GcProvenance >> gtDetailsFor: aView [
 		priority: 1;
 		items: [ self detailFacets ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | (v isCollection and: [ v isString not ]) ifTrue: [ v printString ] ifFalse: [ v displayString ] ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'initialization' }

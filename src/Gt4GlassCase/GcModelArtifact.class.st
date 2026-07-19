@@ -38,13 +38,13 @@ GcModelArtifact >> coordinate [
 		yourself
 ]
 
-{ #category : 'accessing' }
+{ #category : 'views' }
 GcModelArtifact >> detailFacets [
 	^ {
-		'Revision' -> (revision ifNil: [ '?' ] ifNotNil: [ :r | r id ]).
-		'Precision' -> precision asString.
-		'Format' -> format asString.
-		'Location' -> (location ifNil: [ '' ] ifNotNil: [ :l | l asString ]) }
+		'Revision' -> revision.
+		'Precision' -> precision.
+		'Format' -> format.
+		'Location' -> location }
 ]
 
 { #category : 'accessing' }
@@ -70,13 +70,15 @@ GcModelArtifact >> gtCoordinateFor: aView [
 
 { #category : 'views' }
 GcModelArtifact >> gtDetailsFor: aView [
+	"What exactly is this artifact? Clicking Revision navigates to the revision object."
 	<gtView>
 	^ aView columnedList
 		title: 'Details';
 		priority: 1;
 		items: [ self detailFacets ];
-		column: 'Facet' text: [ :each | each key ];
-		column: 'Value' text: [ :each | each value ]
+		column: 'Facet' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | v displayString ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'accessing' }

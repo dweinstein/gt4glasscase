@@ -47,17 +47,18 @@ GcTensorRef >> detailFacets [
 	| pn |
 	pn := self parsedName.
 	^ {
-		'Name' -> (name ifNil: [ '—' ]).
-		'Dtype' -> dtype asString.
-		'Shape' -> shape printString.
-		'Params' -> self paramCount printString.
-		'Bytes' -> self byteSize printString.
-		'Byte range' -> (beginOffset printString, ' .. ', endOffset printString).
-		'Layer' -> (pn layerIndex ifNil: [ '—' ] ifNotNil: [ :i | i printString ]).
-		'Block' -> (pn block ifNil: [ '—' ]) asString.
-		'Module' -> (pn module ifNil: [ '—' ]).
-		'Role' -> (pn role ifNil: [ '—' ]).
-		'Expert' -> (pn expertIndex ifNil: [ '—' ] ifNotNil: [ :i | i printString ]) }
+		'Name' -> name.
+		'Dtype' -> dtype.
+		'Shape' -> shape.
+		'Params' -> self paramCount.
+		'Bytes' -> self byteSize.
+		'Byte range' -> (beginOffset ifNil: [ nil ] ifNotNil: [ :b | b printString, ' .. ', endOffset printString ]).
+		'Layer' -> pn layerIndex.
+		'Block' -> pn block.
+		'Module' -> pn module.
+		'Role' -> pn role.
+		'Expert' -> pn expertIndex.
+		'Parsed name' -> pn }
 ]
 
 { #category : 'accessing' }
@@ -118,7 +119,8 @@ GcTensorRef >> gtDetailsFor: aView [
 		priority: 1;
 		items: [ self detailFacets ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | (v isCollection and: [ v isString not ]) ifTrue: [ v printString ] ifFalse: [ v displayString ] ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'querying' }

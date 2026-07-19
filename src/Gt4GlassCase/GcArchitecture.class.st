@@ -34,7 +34,8 @@ GcArchitecture >> gtOverviewFor: aView [
 		priority: 1;
 		items: [ self overviewFacets ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | v displayString ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'derived' }
@@ -97,12 +98,12 @@ GcArchitecture >> numLayers: anInteger [
 { #category : 'views' }
 GcArchitecture >> overviewFacets [
 	^ {
-		'Layers' -> (numLayers ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
-		'Attention heads' -> (numHeads ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
-		'KV heads (GQA)' -> (kvHeads ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
-		'Hidden size' -> (hiddenSize ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
-		'Head dim' -> (self headDim ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
-		'MoE experts' -> (moeExperts ifNil: [ 'dense' ] ifNotNil: [ :n | n printString ]) }
+		'Layers' -> numLayers.
+		'Attention heads' -> numHeads.
+		'KV heads (GQA)' -> kvHeads.
+		'Hidden size' -> hiddenSize.
+		'Head dim' -> self headDim.
+		'MoE experts' -> moeExperts }
 ]
 
 { #category : 'printing' }

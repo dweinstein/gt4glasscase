@@ -27,9 +27,10 @@ GcModelFamily >> gtDetailsFor: aView [
 	^ aView columnedList
 		title: 'Family';
 		priority: 1;
-		items: [ { 'Name' -> (name ifNil: [ '-' ]). 'Publisher' -> (publisher ifNil: [ '-' ]) } ];
+		items: [ { 'Name' -> name. 'Publisher' -> publisher } ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | v displayString ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'accessing' }

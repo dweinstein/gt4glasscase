@@ -43,14 +43,15 @@ GcSafetensorsFile >> byteDataOffset: anInteger [
 
 { #category : 'views' }
 GcSafetensorsFile >> gtSummaryFor: aView [
-	"What does this safetensors file contain, overall?"
+	"What does this safetensors file contain, overall? Clicking 'Tensors' navigates into the tensor group."
 	<gtView>
 	^ aView columnedList
 		title: 'Summary';
 		priority: 1;
 		items: [ self summaryFacets ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | (v isCollection and: [ v isString not ]) ifTrue: [ v printString ] ifFalse: [ v displayString ] ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'views' }
@@ -106,13 +107,13 @@ GcSafetensorsFile >> summaryFacets [
 	| group |
 	group := self tensorGroup.
 	^ {
-		'Path' -> (path ifNil: [ '—' ]).
-		'Tensors' -> self tensorCount printString.
-		'Total params' -> group totalParams printString.
-		'Total bytes' -> group totalBytes printString.
-		'Layers' -> group layerIndices size printString.
-		'Modules' -> group byModule size printString.
-		'Dtypes' -> ((self tensors collect: [ :t | t dtype ]) asSet asSortedCollection asArray) printString }
+		'Path' -> path.
+		'Tensors' -> group.
+		'Total params' -> group totalParams.
+		'Total bytes' -> group totalBytes.
+		'Layers' -> group layerIndices size.
+		'Modules' -> group byModule size.
+		'Dtypes' -> ((self tensors collect: [ :t | t dtype ]) asSet asSortedCollection asArray) }
 ]
 
 { #category : 'querying' }

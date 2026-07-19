@@ -42,11 +42,10 @@ GcModelRevision >> commitSha: aString [
 GcModelRevision >> detailFacets [
 	^ {
 		'Id' -> self id.
-		'Repository' -> (repositoryId ifNil: [ '-' ]).
-		'Commit' -> (commitSha ifNil: [ '-' ]).
-		'Family' -> (family ifNil: [ '-' ] ifNotNil: [ :f | f name ifNil: [ '-' ] ]).
-		'Publisher' -> (provenance ifNil: [ '-' ] ifNotNil: [ :p | p publisher ifNil: [ '-' ] ]).
-		'License' -> (provenance ifNil: [ '-' ] ifNotNil: [ :p | p license ifNil: [ '-' ] ]) }
+		'Repository' -> repositoryId.
+		'Commit' -> commitSha.
+		'Family' -> family.
+		'Provenance' -> provenance }
 ]
 
 { #category : 'accessing' }
@@ -61,14 +60,15 @@ GcModelRevision >> family: aFamily [
 
 { #category : 'views' }
 GcModelRevision >> gtDetailsFor: aView [
-	"What exactly is this revision, and where did it come from?"
+	"What exactly is this revision? Clicking Family or Provenance navigates to those domain objects."
 	<gtView>
 	^ aView columnedList
 		title: 'Revision';
 		priority: 1;
 		items: [ self detailFacets ];
 		column: 'Property' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | v displayString ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'accessing' }

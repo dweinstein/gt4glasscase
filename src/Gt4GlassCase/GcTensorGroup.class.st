@@ -20,7 +20,7 @@ GcTensorGroup >> byModule [
 
 { #category : 'views' }
 GcTensorGroup >> gtByLayerFor: aView [
-	"How does parameter mass vary with depth?"
+	"How does parameter mass vary with depth? Clicking a row opens that layer's tensor sub-group."
 	<gtView>
 	^ aView columnedList
 		title: 'By layer';
@@ -28,12 +28,13 @@ GcTensorGroup >> gtByLayerFor: aView [
 		items: [ self layerSummaries ];
 		column: 'Layer' text: [ :assoc | assoc key isNil ifTrue: [ '(non-layer)' ] ifFalse: [ assoc key printString ] ];
 		column: 'Tensors' text: [ :assoc | assoc value size printString ];
-		column: 'Params' text: [ :assoc | assoc value totalParams printString ]
+		column: 'Params' text: [ :assoc | assoc value totalParams printString ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'views' }
 GcTensorGroup >> gtByModuleFor: aView [
-	"How is parameter mass distributed across module types?"
+	"How is parameter mass distributed across module types? Clicking a row opens that module's tensor sub-group."
 	<gtView>
 	^ aView columnedList
 		title: 'By module';
@@ -41,7 +42,8 @@ GcTensorGroup >> gtByModuleFor: aView [
 		items: [ self moduleSummaries ];
 		column: 'Module' text: [ :assoc | assoc key ];
 		column: 'Tensors' text: [ :assoc | assoc value size printString ];
-		column: 'Params' text: [ :assoc | assoc value totalParams printString ]
+		column: 'Params' text: [ :assoc | assoc value totalParams printString ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'views' }
@@ -67,7 +69,8 @@ GcTensorGroup >> gtStatisticsFor: aView [
 		priority: 8;
 		items: [ (self statistics associations asSortedCollection: [ :a :b | a key < b key ]) asArray ];
 		column: 'Metric' text: [ :assoc | assoc key asString ];
-		column: 'Value' text: [ :assoc | assoc value printString ]
+		column: 'Value' text: [ :assoc | assoc value displayString ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'grouping' }

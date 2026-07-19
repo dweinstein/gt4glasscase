@@ -55,7 +55,8 @@ GcModelConfig >> gtConfigFor: aView [
 			ifNil: [ #() ]
 			ifNotNil: [ rawJson associations asSortedCollection: [ :a :b | a key < b key ] ] ];
 		column: 'Key' text: [ :assoc | assoc key ];
-		column: 'Value' text: [ :assoc | assoc value printString ]
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | (v isCollection and: [ v isString not ]) ifTrue: [ v printString ] ifFalse: [ v displayString ] ] ];
+		send: [ :assoc | assoc value ]
 ]
 
 { #category : 'typed accessors' }
