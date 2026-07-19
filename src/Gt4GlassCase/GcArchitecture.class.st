@@ -14,3 +14,79 @@ Class {
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
 }
+
+{ #category : 'instance creation' }
+GcArchitecture class >> fromConfig: aConfig [
+	^ self new
+		numLayers: aConfig numLayers;
+		numHeads: aConfig numHeads;
+		kvHeads: aConfig kvHeads;
+		hiddenSize: aConfig hiddenSize;
+		yourself
+]
+
+{ #category : 'derived' }
+GcArchitecture >> headDim [
+	^ (hiddenSize notNil and: [ numHeads notNil and: [ numHeads > 0 ] ])
+		ifTrue: [ hiddenSize // numHeads ]
+		ifFalse: [ nil ]
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> hiddenSize [
+	^ hiddenSize
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> hiddenSize: anInteger [
+	hiddenSize := anInteger
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> kvHeads [
+	^ kvHeads
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> kvHeads: anInteger [
+	kvHeads := anInteger
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> moeExperts [
+	^ moeExperts
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> moeExperts: anInteger [
+	moeExperts := anInteger
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> numHeads [
+	^ numHeads
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> numHeads: anInteger [
+	numHeads := anInteger
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> numLayers [
+	^ numLayers
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> numLayers: anInteger [
+	numLayers := anInteger
+]
+
+{ #category : 'printing' }
+GcArchitecture >> printOn: aStream [
+	aStream nextPutAll: 'GcArchitecture('.
+	aStream print: numLayers.
+	aStream nextPutAll: 'L x '.
+	aStream print: hiddenSize.
+	aStream nextPutAll: 'd)'
+]

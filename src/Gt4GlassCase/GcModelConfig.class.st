@@ -10,3 +10,70 @@ Class {
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
 }
+
+{ #category : 'instance creation' }
+GcModelConfig class >> fromDictionary: aDictionary [
+	^ self new rawJson: aDictionary; yourself
+]
+
+{ #category : 'converting' }
+GcModelConfig >> architecture [
+	^ GcArchitecture fromConfig: self
+]
+
+{ #category : 'accessing' }
+GcModelConfig >> at: aKey [
+	^ rawJson at: aKey ifAbsent: [ nil ]
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> hiddenSize [
+	^ self at: 'hidden_size'
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> intermediateSize [
+	^ self at: 'intermediate_size'
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> kvHeads [
+	^ self at: 'num_key_value_heads'
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> modelType [
+	^ self at: 'model_type'
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> numHeads [
+	^ self at: 'num_attention_heads'
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> numLayers [
+	^ self at: 'num_hidden_layers'
+]
+
+{ #category : 'printing' }
+GcModelConfig >> printOn: aStream [
+	aStream nextPutAll: 'GcModelConfig('.
+	aStream nextPutAll: (self modelType ifNil: [ '?' ]) asString.
+	aStream nextPut: $)
+]
+
+{ #category : 'accessing' }
+GcModelConfig >> rawJson [
+	^ rawJson
+]
+
+{ #category : 'accessing' }
+GcModelConfig >> rawJson: aDictionary [
+	rawJson := aDictionary
+]
+
+{ #category : 'typed accessors' }
+GcModelConfig >> vocabSize [
+	^ self at: 'vocab_size'
+]

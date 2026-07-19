@@ -20,10 +20,14 @@ BaselineOfGt4GlassCase class >> loadLepiter [
 			self inform: 'Repository not found.' ]
 ]
 
-{ #category : 'baseline' }
+{ #category : 'baselines' }
 BaselineOfGt4GlassCase >> baseline: spec [
 	<baseline>
-		^ spec for: #common do: [
-			spec package: 'Gt4GlassCase'
-		]
+	^ spec for: #common do: [
+		"Gt4HuggingFace is Gc-agnostic and extractable to its own repo; the core depends on it only through the adapter package."
+		spec package: 'Gt4HuggingFace'.
+		spec package: 'Gt4GlassCase'.
+		spec
+			package: 'Gt4GlassCase-HuggingFace'
+			with: [ spec requires: #('Gt4GlassCase' 'Gt4HuggingFace') ] ]
 ]

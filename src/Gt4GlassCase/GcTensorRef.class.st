@@ -52,6 +52,25 @@ GcTensorRef >> dtype: aSymbol [
 	dtype := aSymbol
 ]
 
+{ #category : 'numerics' }
+GcTensorRef >> dtypeByteWidth [
+	"Bytes per element for the tensor's dtype (safetensors names, lowercased)."
+	^ (Dictionary new)
+		at: #f64 put: 8; at: #i64 put: 8; at: #u64 put: 8;
+		at: #f32 put: 4; at: #i32 put: 4; at: #u32 put: 4;
+		at: #f16 put: 2; at: #bf16 put: 2; at: #i16 put: 2; at: #u16 put: 2;
+		at: #f8_e4m3 put: 1; at: #f8_e5m2 put: 1; at: #i8 put: 1; at: #u8 put: 1; at: #bool put: 1;
+		at: dtype ifAbsent: [ nil ]
+]
+
+{ #category : 'numerics' }
+GcTensorRef >> elementCount [
+	"Number of elements = product of the shape dimensions (1 for a scalar)."
+	^ (shape isNil or: [ shape isEmpty ])
+		ifTrue: [ 1 ]
+		ifFalse: [ shape inject: 1 into: [ :product :dim | product * dim ] ]
+]
+
 { #category : 'accessing' }
 GcTensorRef >> endOffset [
 	^ endOffset
@@ -90,6 +109,11 @@ GcTensorRef >> name [
 { #category : 'accessing' }
 GcTensorRef >> name: aString [
 	name := aString
+]
+
+{ #category : 'numerics' }
+GcTensorRef >> paramCount [
+	^ self elementCount
 ]
 
 { #category : 'querying' }
