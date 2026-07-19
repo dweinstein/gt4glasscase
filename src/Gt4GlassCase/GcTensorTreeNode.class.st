@@ -83,7 +83,7 @@ GcTensorTreeNode >> gtTreeFor: aView [
 		priority: 2;
 		items: [ self compressed sortedChildren ];
 		children: [ :node | node compressed sortedChildren ];
-		column: 'Tensor' text: [ :node | node displayLabel ];
+		column: 'Tensors' text: [ :node | node displayLabel ];
 		column: 'Shape' text: [ :node | node shapeText ];
 		column: 'Precision' text: [ :node | node precisionText ];
 		send: [ :node | node compressed isLeaf

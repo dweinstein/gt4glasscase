@@ -43,14 +43,14 @@ GcTensorShape >> elementCount [
 
 { #category : 'printing' }
 GcTensorShape >> formatDimension: anInteger [
-	"Group digits in threes with a space, HuggingFace-style (a space, not a comma, so it never clashes with the comma that separates dimensions): 1536 -> '1 536'."
+	"Group digits in threes with a narrow no-break space (U+202F), matching HuggingFace: 1536 -> '1 536'. The narrow NBSP won't line-wrap mid-number and never clashes with the comma between dimensions."
 	| s size |
 	s := anInteger printString.
 	size := s size.
 	size <= 3 ifTrue: [ ^ s ].
 	^ String streamContents: [ :stream |
 		s doWithIndex: [ :ch :i |
-			(i > 1 and: [ ((size - i + 1) rem: 3) = 0 ]) ifTrue: [ stream space ].
+			(i > 1 and: [ ((size - i + 1) rem: 3) = 0 ]) ifTrue: [ stream nextPut: (Character value: 8239) ].
 			stream nextPut: ch ] ]
 ]
 
