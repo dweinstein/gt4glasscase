@@ -66,22 +66,23 @@ GcTensorTreeNode >> compressedSegment [
 
 { #category : 'displaying' }
 GcTensorTreeNode >> displayLabel [
+	"The full dotted path (HuggingFace-style), with a child count for interior nodes."
 	| c |
 	c := self compressed.
 	^ c isLeaf
-		ifTrue: [ self compressedSegment ]
-		ifFalse: [ self compressedSegment, ' (', c children size printString, ')' ]
+		ifTrue: [ c path ]
+		ifFalse: [ c path, ' (', c children size printString, ')' ]
 ]
 
 { #category : 'views' }
 GcTensorTreeNode >> gtTreeFor: aView [
-	"The tensor-name hierarchy, HuggingFace-style: intermediate nodes carry a child count, leaves show shape + precision. Click a leaf to inspect the tensor; click an interior node to get its subtree as a GcTensorGroup (which has By-module / By-layer / Skyline)."
+	"The tensor-name hierarchy, HuggingFace-style: full dotted paths, numeric-sorted layers, child counts on interior nodes, and shape + precision on leaves. Click a leaf to inspect the tensor; click an interior node to get its subtree as a GcTensorGroup."
 	<gtView>
 	^ aView columnedTree
 		title: 'Tree';
 		priority: 2;
-		items: [ self compressed children ];
-		children: [ :node | node compressed children ];
+		items: [ self compressed sortedChildren ];
+		children: [ :node | node compressed sortedChildren ];
 		column: 'Tensor' text: [ :node | node displayLabel ];
 		column: 'Shape' text: [ :node | node shapeText ];
 		column: 'Precision' text: [ :node | node precisionText ];
@@ -99,6 +100,11 @@ GcTensorTreeNode >> initialize [
 { #category : 'testing' }
 GcTensorTreeNode >> isLeaf [
 	^ tensor notNil
+]
+
+{ #category : 'sorting' }
+GcTensorTreeNode >> isNumericSegment: aString [
+	^ aString notEmpty and: [ aString allSatisfy: [ :c | c isDigit ] ]
 ]
 
 { #category : 'accessing' }
@@ -142,6 +148,22 @@ GcTensorTreeNode >> shapeText [
 	^ self compressed tensor
 		ifNil: [ '' ]
 		ifNotNil: [ :t | t shape ifNil: [ '' ] ifNotNil: [ :s | s printString ] ]
+]
+
+{ #category : 'sorting' }
+GcTensorTreeNode >> sortedChildren [
+	^ (self children asSortedCollection: [ :x :y | x sortsBefore: y ]) asArray
+]
+
+{ #category : 'sorting' }
+GcTensorTreeNode >> sortsBefore: anotherNode [
+	"Numeric segments sort by integer value (so layer 2 precedes layer 10); everything else alphabetically."
+	| a b |
+	a := segment.
+	b := anotherNode segment.
+	((self isNumericSegment: a) and: [ self isNumericSegment: b ])
+		ifTrue: [ ^ a asInteger < b asInteger ].
+	^ a < b
 ]
 
 { #category : 'accessing' }
