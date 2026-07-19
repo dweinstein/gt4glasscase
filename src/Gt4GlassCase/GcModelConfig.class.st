@@ -26,6 +26,13 @@ GcModelConfig >> at: aKey [
 	^ rawJson at: aKey ifAbsent: [ nil ]
 ]
 
+{ #category : 'accessing' }
+GcModelConfig >> atAny: anArrayOfKeys [
+	"First present value among alternative config keys (model families name the same field differently)."
+	anArrayOfKeys do: [ :k | (rawJson at: k ifAbsent: [ nil ]) ifNotNil: [ :v | ^ v ] ].
+	^ nil
+]
+
 { #category : 'views' }
 GcModelConfig >> gtArchitectureFor: aView [
 	"The derived shape -- composed from the same config."
@@ -53,17 +60,17 @@ GcModelConfig >> gtConfigFor: aView [
 
 { #category : 'typed accessors' }
 GcModelConfig >> hiddenSize [
-	^ self at: 'hidden_size'
+	^ self atAny: #('hidden_size' 'n_embd' 'd_model')
 ]
 
 { #category : 'typed accessors' }
 GcModelConfig >> intermediateSize [
-	^ self at: 'intermediate_size'
+	^ self atAny: #('intermediate_size' 'n_inner' 'ffn_dim')
 ]
 
 { #category : 'typed accessors' }
 GcModelConfig >> kvHeads [
-	^ self at: 'num_key_value_heads'
+	^ self atAny: #('num_key_value_heads' 'num_kv_heads')
 ]
 
 { #category : 'typed accessors' }
@@ -73,12 +80,12 @@ GcModelConfig >> modelType [
 
 { #category : 'typed accessors' }
 GcModelConfig >> numHeads [
-	^ self at: 'num_attention_heads'
+	^ self atAny: #('num_attention_heads' 'n_head')
 ]
 
 { #category : 'typed accessors' }
 GcModelConfig >> numLayers [
-	^ self at: 'num_hidden_layers'
+	^ self atAny: #('num_hidden_layers' 'n_layer' 'num_layers')
 ]
 
 { #category : 'printing' }
@@ -100,5 +107,5 @@ GcModelConfig >> rawJson: aDictionary [
 
 { #category : 'typed accessors' }
 GcModelConfig >> vocabSize [
-	^ self at: 'vocab_size'
+	^ self atAny: #('vocab_size')
 ]

@@ -19,6 +19,11 @@ GcHuggingFaceModelSource class >> forRepository: aRepoId [
 		yourself
 ]
 
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> architecture [
+	^ self architectureFor: repositoryId
+]
+
 { #category : 'fetching' }
 GcHuggingFaceModelSource >> architectureFor: aRepoId [
 	^ (self configFor: aRepoId) architecture
@@ -32,6 +37,11 @@ GcHuggingFaceModelSource >> client [
 { #category : 'accessing' }
 GcHuggingFaceModelSource >> client: aClient [
 	client := aClient
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> config [
+	^ self configFor: repositoryId
 ]
 
 { #category : 'fetching' }
@@ -52,6 +62,11 @@ GcHuggingFaceModelSource >> injectTokenIfPresent [
 	| ref |
 	ref := FileLocator home / '.secrets' / 'huggingface-token.txt'.
 	ref exists ifTrue: [ client token: ref contents trimmed ]
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> manifest [
+	^ self manifestFor: repositoryId
 ]
 
 { #category : 'fetching' }
@@ -87,6 +102,16 @@ GcHuggingFaceModelSource >> repositoryId: aString [
 	repositoryId := aString
 ]
 
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> safetensorsFile [
+	^ self safetensorsFile: 'model.safetensors'
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> safetensorsFile: aFileName [
+	^ self safetensorsFileFor: repositoryId file: aFileName
+]
+
 { #category : 'fetching' }
 GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
 	"Translate the generic safetensors header into a GcSafetensorsFile of GcTensorRefs. The core class parses a plain Dictionary, so it stays decoupled from the HF client."
@@ -96,4 +121,9 @@ GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
 	file path: aRepoId, '/', aFileName.
 	file parseHeaderDictionary: header rawDictionary.
 	^ file
+]
+
+{ #category : 'convenience' }
+GcHuggingFaceModelSource >> tensorGroup [
+	^ self safetensorsFile tensorGroup
 ]

@@ -33,6 +33,18 @@ GcHuggingFaceExamples >> liveConfig [
 ]
 
 { #category : 'examples-live' }
+GcHuggingFaceExamples >> liveCrossModelArchitectures [
+	"Load the architecture of several real, different models and pair each with its repo. Vary the model_family axis of the hypercube."
+	<gtExample>
+	<noTest>
+	| results |
+	results := self smallPublicModels collect: [ :repo |
+		repo -> (GcHuggingFaceModelSource forRepository: repo) architecture ].
+	self assert: (results allSatisfy: [ :assoc | assoc value numLayers > 0 ]).
+	^ results
+]
+
+{ #category : 'examples-live' }
 GcHuggingFaceExamples >> liveLayerConsistency [
 	"Cross-check two independent real sources: the number of distinct transformer layers seen in the safetensors tensor names equals num_hidden_layers from config.json."
 	<gtExample>
@@ -75,6 +87,16 @@ GcHuggingFaceExamples >> liveTensorGroupByModule [
 { #category : 'accessing' }
 GcHuggingFaceExamples >> repositoryId [
 	^ 'HuggingFaceTB/SmolLM2-135M'
+]
+
+{ #category : 'accessing' }
+GcHuggingFaceExamples >> smallPublicModels [
+	"Small, public, single-file models spanning architectures/naming schemes -- for cross-model comparison."
+	^ #(
+		'HuggingFaceTB/SmolLM2-135M'
+		'Qwen/Qwen2.5-0.5B'
+		'openai-community/gpt2'
+		'EleutherAI/pythia-160m' )
 ]
 
 { #category : 'accessing' }
