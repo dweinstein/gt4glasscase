@@ -26,6 +26,31 @@ GcModelConfig >> at: aKey [
 	^ rawJson at: aKey ifAbsent: [ nil ]
 ]
 
+{ #category : 'views' }
+GcModelConfig >> gtArchitectureFor: aView [
+	"The derived shape -- composed from the same config."
+	<gtView>
+	^ aView forward
+		title: 'Architecture';
+		priority: 2;
+		object: [ self architecture ];
+		view: #gtOverviewFor:
+]
+
+{ #category : 'views' }
+GcModelConfig >> gtConfigFor: aView [
+	"What does this model declare in config.json?"
+	<gtView>
+	^ aView columnedList
+		title: 'Config';
+		priority: 1;
+		items: [ rawJson
+			ifNil: [ #() ]
+			ifNotNil: [ rawJson associations asSortedCollection: [ :a :b | a key < b key ] ] ];
+		column: 'Key' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value printString ]
+]
+
 { #category : 'typed accessors' }
 GcModelConfig >> hiddenSize [
 	^ self at: 'hidden_size'

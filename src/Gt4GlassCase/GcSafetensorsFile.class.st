@@ -41,6 +41,29 @@ GcSafetensorsFile >> byteDataOffset: anInteger [
 	byteDataOffset := anInteger
 ]
 
+{ #category : 'views' }
+GcSafetensorsFile >> gtSummaryFor: aView [
+	"What does this safetensors file contain, overall?"
+	<gtView>
+	^ aView columnedList
+		title: 'Summary';
+		priority: 1;
+		items: [ self summaryFacets ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
+]
+
+{ #category : 'views' }
+GcSafetensorsFile >> gtTensorsFor: aView [
+	"The tensors themselves, as a shape table (composed from the tensor group)."
+	<gtView>
+	^ aView forward
+		title: 'Tensors';
+		priority: 2;
+		object: [ self tensorGroup ];
+		view: #gtShapeTableFor:
+]
+
 { #category : 'accessing' }
 GcSafetensorsFile >> header [
 	^ header
@@ -76,6 +99,20 @@ GcSafetensorsFile >> printOn: aStream [
 	aStream nextPutAll: ', '.
 	aStream print: self tensorCount.
 	aStream nextPutAll: ' tensors)'
+]
+
+{ #category : 'views' }
+GcSafetensorsFile >> summaryFacets [
+	| group |
+	group := self tensorGroup.
+	^ {
+		'Path' -> (path ifNil: [ '—' ]).
+		'Tensors' -> self tensorCount printString.
+		'Total params' -> group totalParams printString.
+		'Total bytes' -> group totalBytes printString.
+		'Layers' -> group layerIndices size printString.
+		'Modules' -> group byModule size printString.
+		'Dtypes' -> ((self tensors collect: [ :t | t dtype ]) asSet asSortedCollection asArray) printString }
 ]
 
 { #category : 'querying' }

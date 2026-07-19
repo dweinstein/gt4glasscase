@@ -38,6 +38,18 @@ GcCoordinate >> bindings [
 	^ bindings
 ]
 
+{ #category : 'views' }
+GcCoordinate >> gtBindingsFor: aView [
+	"Where in the hypercube does this coordinate sit?"
+	<gtView>
+	^ aView columnedList
+		title: 'Coordinate';
+		priority: 1;
+		items: [ self axes ];
+		column: 'Axis' text: [ :axisName | axisName asString ];
+		column: 'Value' text: [ :axisName | (self at: axisName) printString ]
+]
+
 { #category : 'comparing' }
 GcCoordinate >> hash [
 	^ bindings hash

@@ -38,6 +38,17 @@ GcModelRevision >> commitSha: aString [
 	commitSha := aString
 ]
 
+{ #category : 'views' }
+GcModelRevision >> detailFacets [
+	^ {
+		'Id' -> self id.
+		'Repository' -> (repositoryId ifNil: [ '-' ]).
+		'Commit' -> (commitSha ifNil: [ '-' ]).
+		'Family' -> (family ifNil: [ '-' ] ifNotNil: [ :f | f name ifNil: [ '-' ] ]).
+		'Publisher' -> (provenance ifNil: [ '-' ] ifNotNil: [ :p | p publisher ifNil: [ '-' ] ]).
+		'License' -> (provenance ifNil: [ '-' ] ifNotNil: [ :p | p license ifNil: [ '-' ] ]) }
+]
+
 { #category : 'accessing' }
 GcModelRevision >> family [
 	^ family
@@ -46,6 +57,18 @@ GcModelRevision >> family [
 { #category : 'accessing' }
 GcModelRevision >> family: aFamily [
 	family := aFamily
+]
+
+{ #category : 'views' }
+GcModelRevision >> gtDetailsFor: aView [
+	"What exactly is this revision, and where did it come from?"
+	<gtView>
+	^ aView columnedList
+		title: 'Revision';
+		priority: 1;
+		items: [ self detailFacets ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
 ]
 
 { #category : 'accessing' }

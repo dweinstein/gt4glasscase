@@ -58,6 +58,17 @@ GcModelArtifact >> format: aSymbol [
 ]
 
 { #category : 'views' }
+GcModelArtifact >> gtCoordinateFor: aView [
+	"Where in the hypercube does this artifact sit?"
+	<gtView>
+	^ aView forward
+		title: 'Coordinate';
+		priority: 2;
+		object: [ self coordinate ];
+		view: #gtBindingsFor:
+]
+
+{ #category : 'views' }
 GcModelArtifact >> gtDetailsFor: aView [
 	<gtView>
 	^ aView columnedList

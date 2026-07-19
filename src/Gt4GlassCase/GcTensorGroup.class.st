@@ -19,6 +19,32 @@ GcTensorGroup >> byModule [
 ]
 
 { #category : 'views' }
+GcTensorGroup >> gtByLayerFor: aView [
+	"How does parameter mass vary with depth?"
+	<gtView>
+	^ aView columnedList
+		title: 'By layer';
+		priority: 7;
+		items: [ self layerSummaries ];
+		column: 'Layer' text: [ :assoc | assoc key isNil ifTrue: [ '(non-layer)' ] ifFalse: [ assoc key printString ] ];
+		column: 'Tensors' text: [ :assoc | assoc value size printString ];
+		column: 'Params' text: [ :assoc | assoc value totalParams printString ]
+]
+
+{ #category : 'views' }
+GcTensorGroup >> gtByModuleFor: aView [
+	"How is parameter mass distributed across module types?"
+	<gtView>
+	^ aView columnedList
+		title: 'By module';
+		priority: 6;
+		items: [ self moduleSummaries ];
+		column: 'Module' text: [ :assoc | assoc key ];
+		column: 'Tensors' text: [ :assoc | assoc value size printString ];
+		column: 'Params' text: [ :assoc | assoc value totalParams printString ]
+]
+
+{ #category : 'views' }
 GcTensorGroup >> gtShapeTableFor: aView [
 	<gtView>
 	^ aView columnedList
@@ -32,9 +58,33 @@ GcTensorGroup >> gtShapeTableFor: aView [
 		column: 'Bytes' text: [ :t | t byteSize printString ]
 ]
 
+{ #category : 'views' }
+GcTensorGroup >> gtStatisticsFor: aView [
+	"Summary metrics for this tensor group."
+	<gtView>
+	^ aView columnedList
+		title: 'Statistics';
+		priority: 8;
+		items: [ (self statistics associations asSortedCollection: [ :a :b | a key < b key ]) asArray ];
+		column: 'Metric' text: [ :assoc | assoc key asString ];
+		column: 'Value' text: [ :assoc | assoc value printString ]
+]
+
 { #category : 'grouping' }
 GcTensorGroup >> layerIndices [
 	^ (((self collect: [ :t | t layerIndex ]) reject: [ :x | x isNil ]) asSet) asSortedCollection asArray
+]
+
+{ #category : 'views' }
+GcTensorGroup >> layerSummaries [
+	^ ((self groupedBy: [ :t | t layerIndex ]) associations
+		asSortedCollection: [ :a :b | (a key ifNil: [ -1 ]) < (b key ifNil: [ -1 ]) ]) asArray
+]
+
+{ #category : 'views' }
+GcTensorGroup >> moduleSummaries [
+	^ ((self groupedBy: [ :t | t module ifNil: [ '(none)' ] ]) associations
+		asSortedCollection: [ :a :b | a key < b key ]) asArray
 ]
 
 { #category : 'analyzing' }

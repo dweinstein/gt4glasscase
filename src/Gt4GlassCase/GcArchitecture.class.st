@@ -25,6 +25,18 @@ GcArchitecture class >> fromConfig: aConfig [
 		yourself
 ]
 
+{ #category : 'views' }
+GcArchitecture >> gtOverviewFor: aView [
+	"What shape is this model?"
+	<gtView>
+	^ aView columnedList
+		title: 'Shape';
+		priority: 1;
+		items: [ self overviewFacets ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
+]
+
 { #category : 'derived' }
 GcArchitecture >> headDim [
 	^ (hiddenSize notNil and: [ numHeads notNil and: [ numHeads > 0 ] ])
@@ -80,6 +92,17 @@ GcArchitecture >> numLayers [
 { #category : 'accessing' }
 GcArchitecture >> numLayers: anInteger [
 	numLayers := anInteger
+]
+
+{ #category : 'views' }
+GcArchitecture >> overviewFacets [
+	^ {
+		'Layers' -> (numLayers ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
+		'Attention heads' -> (numHeads ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
+		'KV heads (GQA)' -> (kvHeads ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
+		'Hidden size' -> (hiddenSize ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
+		'Head dim' -> (self headDim ifNil: [ '—' ] ifNotNil: [ :n | n printString ]).
+		'MoE experts' -> (moeExperts ifNil: [ 'dense' ] ifNotNil: [ :n | n printString ]) }
 ]
 
 { #category : 'printing' }

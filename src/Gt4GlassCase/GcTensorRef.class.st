@@ -42,6 +42,24 @@ GcTensorRef >> byteSize [
 		ifFalse: [ 0 ]
 ]
 
+{ #category : 'views' }
+GcTensorRef >> detailFacets [
+	| pn |
+	pn := self parsedName.
+	^ {
+		'Name' -> (name ifNil: [ '—' ]).
+		'Dtype' -> dtype asString.
+		'Shape' -> shape printString.
+		'Params' -> self paramCount printString.
+		'Bytes' -> self byteSize printString.
+		'Byte range' -> (beginOffset printString, ' .. ', endOffset printString).
+		'Layer' -> (pn layerIndex ifNil: [ '—' ] ifNotNil: [ :i | i printString ]).
+		'Block' -> (pn block ifNil: [ '—' ]) asString.
+		'Module' -> (pn module ifNil: [ '—' ]).
+		'Role' -> (pn role ifNil: [ '—' ]).
+		'Expert' -> (pn expertIndex ifNil: [ '—' ] ifNotNil: [ :i | i printString ]) }
+]
+
 { #category : 'accessing' }
 GcTensorRef >> dtype [
 	^ dtype
@@ -89,6 +107,18 @@ GcTensorRef >> file [
 { #category : 'accessing' }
 GcTensorRef >> file: aFile [
 	file := aFile
+]
+
+{ #category : 'views' }
+GcTensorRef >> gtDetailsFor: aView [
+	"What is this tensor and where does it live in the model?"
+	<gtView>
+	^ aView columnedList
+		title: 'Tensor';
+		priority: 1;
+		items: [ self detailFacets ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
 ]
 
 { #category : 'querying' }

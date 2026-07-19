@@ -29,6 +29,18 @@ GcAxis class >> named: aSymbol values: aCollection ordering: anOrdering [
 	^ axis
 ]
 
+{ #category : 'views' }
+GcAxis >> gtValuesFor: aView [
+	"What values can this axis take, and in what order?"
+	<gtView>
+	^ aView columnedList
+		title: 'Values';
+		priority: 1;
+		items: [ values ifNil: [ #() ] ];
+		column: 'Value' text: [ :v | v printString ];
+		column: 'Rank' text: [ :v | (self rankOf: v) ifNil: [ '' ] ifNotNil: [ :r | r printString ] ]
+]
+
 { #category : 'testing' }
 GcAxis >> isOrdinal [
 	^ ordering isNotNil

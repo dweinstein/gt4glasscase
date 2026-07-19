@@ -20,6 +20,18 @@ GcModelFamily class >> name: aString publisher: anotherString [
 		yourself
 ]
 
+{ #category : 'views' }
+GcModelFamily >> gtDetailsFor: aView [
+	"Which logical model is this?"
+	<gtView>
+	^ aView columnedList
+		title: 'Family';
+		priority: 1;
+		items: [ { 'Name' -> (name ifNil: [ '-' ]). 'Publisher' -> (publisher ifNil: [ '-' ]) } ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
+]
+
 { #category : 'accessing' }
 GcModelFamily >> name [
 	^ name

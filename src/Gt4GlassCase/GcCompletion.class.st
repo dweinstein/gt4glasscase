@@ -29,6 +29,16 @@ GcCompletion >> coordinate [
 	^ run ifNil: [ GcCoordinate new ] ifNotNil: [ :r | r coordinate ]
 ]
 
+{ #category : 'views' }
+GcCompletion >> gtTextFor: aView [
+	"The generated text."
+	<gtView>
+	^ aView textEditor
+		title: 'Text';
+		priority: 1;
+		text: [ text ifNil: [ '' ] ]
+]
+
 { #category : 'accessing' }
 GcCompletion >> latencyMs [
 	^ latencyMs

@@ -39,6 +39,28 @@ GcProvenance >> announcementUrl: aString [
 	announcementUrl := aString
 ]
 
+{ #category : 'views' }
+GcProvenance >> detailFacets [
+	^ {
+		'Publisher' -> (publisher ifNil: [ '-' ]).
+		'License' -> (license ifNil: [ '-' ]).
+		'Release date' -> (releaseDate ifNil: [ '-' ] ifNotNil: [ :d | d printString ]).
+		'Announcement' -> (announcementUrl ifNil: [ '-' ]).
+		'Mirror hops' -> (mirrorChain ifNil: [ #() ]) size printString }
+]
+
+{ #category : 'views' }
+GcProvenance >> gtDetailsFor: aView [
+	"Where did this artifact come from?"
+	<gtView>
+	^ aView columnedList
+		title: 'Provenance';
+		priority: 1;
+		items: [ self detailFacets ];
+		column: 'Property' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ]
+]
+
 { #category : 'initialization' }
 GcProvenance >> initialize [
 	super initialize.

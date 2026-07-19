@@ -17,6 +17,18 @@ GcSliceGroup >> cohorts [
 	^ self items
 ]
 
+{ #category : 'views' }
+GcSliceGroup >> gtCohortsFor: aView [
+	"The cohorts that differ only along the varying axis."
+	<gtView>
+	^ aView columnedList
+		title: 'Cohorts';
+		priority: 5;
+		items: [ self cohorts ];
+		column: 'Cohort' text: [ :g | g printString ];
+		column: 'Size' text: [ :g | g size printString ]
+]
+
 { #category : 'accessing' }
 GcSliceGroup >> varyingAxis [
 	^ varyingAxis
