@@ -394,6 +394,30 @@ GcExamples >> provenanceQwen3 [
 	^ prov
 ]
 
+{ #category : 'examples - regularity' }
+GcExamples >> regularityZScoreDetectsPlantedCohortAnomaly [
+	"z-score math over a synthetic cohort of 10 q_proj.weight tensors (one per layer), all identical except a planted shape anomaly at layer 7. With 9 identical + 1 different, the planted member's population z is exactly sqrt(9) = 3 and each normal member's is -1/3, independent of the actual values -- so the anomaly is unmistakable and the maths is exact."
+	<gtExample>
+	| group scores planted normal |
+	group := GcTensorGroup new.
+	0 to: 9 do: [ :i |
+		group addItem: (GcTensorRef
+			name: 'model.layers.' , i printString , '.self_attn.q_proj.weight'
+			dtype: #bf16
+			shape: (i = 7 ifTrue: [ #(128 128) ] ifFalse: [ #(64 64) ])) ].
+	scores := group regularityScores.
+	planted := scores at: (group items detect: [ :t | t layerIndex = 7 ]).
+	normal := scores at: (group items detect: [ :t | t layerIndex = 0 ]).
+	self assert: planted isStructuralMetric.
+	self assert: planted cohortSize equals: 10.
+	self assert: (planted z closeTo: 3.0).
+	self assert: planted absZ > 2.
+	self assert: (normal z closeTo: -1 / 3).
+	self assert: normal absZ < 0.5.
+	self assert: planted hasCohort.
+	^ group
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> revisionQwen3_32b [
 	<gtExample>
@@ -447,6 +471,92 @@ GcExamples >> safetensorsTightFileHasNoSlack [
 	file parseHeaderDictionary: h.
 	self assert: file slackRanges isEmpty.
 	^ file
+]
+
+{ #category : 'examples - regularity' }
+GcExamples >> skylineBuildsForMoeScaleModelWithinBudget [
+	"Performance acceptance: a 61-layer MoE-scale header (~700+ tensors, generated programmatically) must build the skyline element hermetically in bounded time (< 3 s). Proves the issue's 'renders a 61-layer MoE without lag' claim without any network."
+	<gtExample>
+	| file group m ms |
+	file := self syntheticModelFileNamed: 'synthetic-moe-61L' layers: 61 experts: 3.
+	group := file tensorGroup.
+	self assert: group size >= 700.
+	ms := [ m := GtMondrian new. group paintSkylineOn: m. m root ] millisecondsToRun.
+	self assert: m root children notEmpty.
+	self assert: m root children size equals: 1 + group layers size.
+	self assert: ms < 3000.
+	^ file
+]
+
+{ #category : 'examples - regularity' }
+GcExamples >> skylineRendersWithStructuralAnomaly [
+	"Build a synthetic 6-layer safetensors file with a planted structural anomaly (one q_proj with an off shape), then paint the skyline and assert it renders: one caption node plus one row per depth (bands + layers), and the planted tensor's |z| exceeds 2 via the structural metric."
+	<gtExample>
+	| header info begin file group m planted expected |
+	header := self syntheticModelHeaderLayers: 6 experts: 0.
+	info := header at: 'model.layers.3.self_attn.q_proj.weight'.
+	begin := (info at: 'data_offsets') first.
+	info at: 'shape' put: #(64 320).
+	info at: 'data_offsets' put: { begin. begin + (64 * 320 * 2) }.
+	file := GcSafetensorsFile new.
+	file path: 'synthetic-anomaly-6L'.
+	file parseHeaderDictionary: header.
+	group := file tensorGroup.
+	m := GtMondrian new.
+	group paintSkylineOn: m.
+	self assert: m root children notEmpty.
+	expected := 1 + group layers size.
+	self assert: m root children size equals: expected.
+	planted := group items detect: [ :t | t name = 'model.layers.3.self_attn.q_proj.weight' ].
+	self assert: (group regularityScoreFor: planted) absZ > 2.
+	self assert: (group regularityScoreFor: planted) isStructuralMetric.
+	^ file
+]
+
+{ #category : 'fixtures' }
+GcExamples >> syntheticModelFileNamed: aString layers: nLayers experts: expertsPerLayer [
+	| file |
+	file := GcSafetensorsFile new.
+	file path: aString.
+	file parseHeaderDictionary: (self syntheticModelHeaderLayers: nLayers experts: expertsPerLayer).
+	^ file
+]
+
+{ #category : 'fixtures' }
+GcExamples >> syntheticModelHeaderLayers: nLayers experts: expertsPerLayer [
+	"Build a plain safetensors header (name -> {dtype, shape, data_offsets}) for a synthetic bf16 transformer with nLayers layers plus embeddings and a head, with sequential contiguous byte offsets. Exercises the skyline and regularity with no network."
+	| header hidden offset add |
+	header := Dictionary new.
+	hidden := 64.
+	offset := 0.
+	add := [ :tname :dims |
+		| elems bytes |
+		elems := dims inject: 1 into: [ :p :d | p * d ].
+		bytes := elems * 2.
+		header at: tname put: (Dictionary new
+			at: 'dtype' put: 'BF16';
+			at: 'shape' put: dims asArray;
+			at: 'data_offsets' put: { offset. offset + bytes };
+			yourself).
+		offset := offset + bytes ].
+	add value: 'model.embed_tokens.weight' value: { 32000. hidden }.
+	0 to: nLayers - 1 do: [ :i |
+		| pfx |
+		pfx := 'model.layers.' , i printString , '.'.
+		add value: pfx , 'self_attn.q_proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'self_attn.k_proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'self_attn.v_proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'self_attn.o_proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'mlp.gate_proj.weight' value: { hidden * 2. hidden }.
+		add value: pfx , 'mlp.up_proj.weight' value: { hidden * 2. hidden }.
+		add value: pfx , 'mlp.down_proj.weight' value: { hidden. hidden * 2 }.
+		add value: pfx , 'input_layernorm.weight' value: { hidden }.
+		add value: pfx , 'post_attention_layernorm.weight' value: { hidden }.
+		1 to: expertsPerLayer do: [ :e |
+			add value: pfx , 'mlp.experts.' , e printString , '.gate_proj.weight' value: { hidden. hidden } ] ].
+	add value: 'model.norm.weight' value: { hidden }.
+	add value: 'lm_head.weight' value: { 32000. hidden }.
+	^ header
 ]
 
 { #category : 'examples-groups' }

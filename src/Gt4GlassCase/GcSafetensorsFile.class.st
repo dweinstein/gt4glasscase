@@ -75,6 +75,18 @@ GcSafetensorsFile >> bytesProvider: anObject [
 	bytesProvider := anObject
 ]
 
+{ #category : 'gt - search' }
+GcSafetensorsFile >> gtSearchTensorsFor: aSearch [
+	"Find a tensor by name substring straight from the file inspector (e.g. type q_proj)."
+	<gtSearch>
+	^ aSearch list
+		title: 'Tensors';
+		priority: 10;
+		items: [ self tensors ];
+		itemName: [ :t | t name ];
+		filterBySubstring
+]
+
 { #category : 'views' }
 GcSafetensorsFile >> gtSkylineFor: aView [
 	"The model skyline (forwarded to the tensor group)."
@@ -171,6 +183,20 @@ GcSafetensorsFile >> gtTreeFor: aView [
 		priority: 2;
 		object: [ self tensorTree ];
 		view: #gtTreeFor:
+]
+
+{ #category : 'gt - actions' }
+GcSafetensorsFile >> gtWarmSkylineActionFor: anAction [
+	"Sample one bounded cohort so the forwarded skyline stops being all-grey, then refresh the view in place."
+	<gtAction>
+	^ anAction button
+		tooltip: 'Sample the cheapest per-layer cohort''s stats over bounded HTTP Range fetches, then recolour the skyline';
+		priority: 30;
+		icon: BrGlamorousVectorIcons refresh;
+		action: [ :aButton |
+			[ self tensorGroup warmDefaultCohort.
+			  aButton enqueueTask: (BlTaskAction new action: [ aButton phlow fireViewUpdateWish ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
 { #category : 'bytes port' }

@@ -102,6 +102,23 @@ GcHuggingFaceExamples >> liveTensorSampleStats [
 	^ stats
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveWarmLayernormCohortLightsSkyline [
+	"Warm one cheap per-layer cohort's Tier-1 stats over bounded HTTP Range fetches (e.g. ~30 layernorm vectors of SmolLM2-135M), then confirm at least one tensor now carries a value-metric (sampled-mean) regularity z-score -- the skyline's colour path is real, not just structural. No weights downloaded wholesale (I5)."
+	<gtExample>
+	<noTest>
+	| file group module warmed valueScores |
+	file := self source safetensorsFileFor: self repositoryId file: 'model.safetensors'.
+	group := file tensorGroup.
+	module := group defaultWarmModule.
+	self assert: module notNil.
+	warmed := group warmStatsForModule: module.
+	self assert: warmed > 0.
+	valueScores := group regularityScores values select: [ :s | s isValueMetric and: [ s hasCohort ] ].
+	self assert: valueScores notEmpty.
+	^ file
+]
+
 { #category : 'accessing' }
 GcHuggingFaceExamples >> repositoryId [
 	^ 'HuggingFaceTB/SmolLM2-135M'

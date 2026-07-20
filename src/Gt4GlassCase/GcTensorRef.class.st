@@ -49,6 +49,12 @@ GcTensorRef >> byteSize [
 		ifFalse: [ 0 ]
 ]
 
+{ #category : 'accessing' }
+GcTensorRef >> cachedStats [
+	"The cached Tier-1 stats, or nil if not computed yet. Never fetches (unlike #stats)."
+	^ stats
+]
+
 { #category : 'views' }
 GcTensorRef >> detailFacets [
 	| pn |
@@ -158,6 +164,12 @@ GcTensorRef >> gtValueDistributionFor: aView [
 		priority: 4;
 		object: [ self stats ];
 		view: #gtValueDistributionFor:
+]
+
+{ #category : 'testing' }
+GcTensorRef >> hasStats [
+	"Are Tier-1 stats already computed and cached? Answers WITHOUT triggering a fetch (unlike #stats), so regularity views can read value stats only where they are free."
+	^ stats notNil
 ]
 
 { #category : 'sampling' }

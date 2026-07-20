@@ -36,13 +36,24 @@ GcTensorGroup >> byModule [
 	^ self partitionBy: [ :t | t module ]
 ]
 
-{ #category : 'views' }
-GcTensorGroup >> colorForBlock: aSymbol [
-	aSymbol = #attention ifTrue: [ ^ Color r: 0.20 g: 0.45 b: 0.80 ].
-	aSymbol = #mlp ifTrue: [ ^ Color r: 0.85 g: 0.45 b: 0.20 ].
-	aSymbol = #embedding ifTrue: [ ^ Color r: 0.25 g: 0.65 b: 0.35 ].
-	aSymbol = #norm ifTrue: [ ^ Color r: 0.60 g: 0.60 b: 0.62 ].
-	^ Color gray
+{ #category : 'regularity' }
+GcTensorGroup >> cohortKeyFor: aTensor [
+	"The cohort a tensor belongs to for regularity: same module and role across every layer (e.g. all q_proj.weight)."
+	| pn |
+	pn := aTensor parsedName.
+	^ (pn module ifNil: [ '?' ]) , ' | ' , (pn role ifNil: [ '?' ])
+]
+
+{ #category : 'regularity' }
+GcTensorGroup >> defaultWarmModule [
+	"The cheapest real (per-layer) cohort to sample: among sampleable transformer-layer tensors, the module whose tensors carry the least total bytes (typically a layernorm). nil if nothing is sampleable."
+	| candidates totals |
+	candidates := self items select: [ :t | t supportsSampling and: [ t layerIndex notNil ] ].
+	candidates isEmpty ifTrue: [ ^ nil ].
+	totals := Dictionary new.
+	candidates do: [ :t |
+		totals at: t module put: (t byteSize + (totals at: t module ifAbsent: [ 0 ])) ].
+	^ (totals associations detectMin: [ :assoc | assoc value ]) key
 ]
 
 { #category : 'views' }
@@ -84,38 +95,33 @@ GcTensorGroup >> gtSearchTensorsFor: aSearch [
 		filterBySubstring
 ]
 
-{ #category : 'views' }
+{ #category : 'gt - views' }
 GcTensorGroup >> gtShapeTableFor: aView [
+	"The workhorse tensor list: every tensor with its structural facts and its regularity z-score against its (module,role) cohort, ordered by |z| descending so anomalies surface first. Click a row to inspect the tensor."
 	<gtView>
 	^ aView columnedList
 		title: 'Tensors';
 		priority: 5;
-		items: [ self items ];
-		column: 'Name' text: [ :t | t name ];
-		column: 'Dtype' text: [ :t | t dtype asString ];
-		column: 'Shape' text: [ :t | t shape printString ];
-		column: 'Params' text: [ :t | t paramCount printString ];
-		column: 'Bytes' text: [ :t | t byteSize printString ]
+		items: [ (self regularityScores values asSortedCollection: [ :a :b | a absZ > b absZ ]) asArray ];
+		column: 'Name' text: [ :s | s tensor name ];
+		column: 'Layer' text: [ :s | s tensor layerIndex ifNil: [ '—' ] ifNotNil: [ :i | i printString ] ];
+		column: 'Module' text: [ :s | s tensor module ifNil: [ '—' ] ];
+		column: 'Dtype' text: [ :s | s tensor dtype asString ];
+		column: 'Shape' text: [ :s | s tensor shape ifNil: [ '—' ] ifNotNil: [ :sh | sh printString ] ];
+		column: 'Params' text: [ :s | s tensor paramCount printString ];
+		column: 'Bytes' text: [ :s | s tensor byteSize printString ];
+		column: 'z' text: [ :s | s zDisplayString ];
+		send: [ :s | s tensor ]
 ]
 
-{ #category : 'views' }
+{ #category : 'gt - views' }
 GcTensorGroup >> gtSkylineFor: aView [
-	"Every tensor as a box sized by parameter count and coloured by block (blue attention, orange mlp, green embedding, grey norm). A regular transformer is boringly uniform; an anomaly would break the texture. Click a box to inspect the tensor."
+	"Does this model's structure deviate from its own internal regularity? One row per depth (embeddings band, transformer layers by index, head/final band); each tensor is a box sized by sqrt(byte size) and coloured by the |z| of its metric within its (module,role) cohort. A normal transformer is boringly uniform, so anything hot or oddly sized breaks the texture at a glance. Click a box to inspect the tensor, a row to open the layer. Colour needs sampled values: use the warm-up action, otherwise everything reads grey (structural only)."
 	<gtView>
 	^ aView mondrian
 		title: 'Skyline';
-		priority: 9;
-		painting: [ :m |
-			m nodes
-				stencil: [ :tensor |
-					| side |
-					side := ((tensor paramCount + 1) sqrt / 44) max: 4.
-					BlElement new
-						background: (self colorForBlock: tensor parsedName block);
-						size: side @ side;
-						yourself ];
-				with: self items.
-			m layout grid ]
+		priority: 3;
+		painting: [ :m | self paintSkylineOn: m ]
 ]
 
 { #category : 'views' }
@@ -142,6 +148,20 @@ GcTensorGroup >> gtTreeFor: aView [
 		view: #gtTreeFor:
 ]
 
+{ #category : 'gt - actions' }
+GcTensorGroup >> gtWarmSkylineActionFor: anAction [
+	"Sample one bounded cohort so the skyline stops being all-grey, then refresh the view in place."
+	<gtAction>
+	^ anAction button
+		tooltip: 'Sample the cheapest per-layer cohort''s stats over bounded HTTP Range fetches, then recolour the skyline';
+		priority: 30;
+		icon: BrGlamorousVectorIcons refresh;
+		action: [ :aButton |
+			[ self warmDefaultCohort.
+			  aButton enqueueTask: (BlTaskAction new action: [ aButton phlow fireViewUpdateWish ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
+]
+
 { #category : 'grouping' }
 GcTensorGroup >> layerIndices [
 	^ (((self collect: [ :t | t layerIndex ]) reject: [ :x | x isNil ]) asSet) asSortedCollection asArray
@@ -153,10 +173,130 @@ GcTensorGroup >> layerSummaries [
 		asSortedCollection: [ :a :b | (a key ifNil: [ -1 ]) < (b key ifNil: [ -1 ]) ]) asArray
 ]
 
+{ #category : 'accessing' }
+GcTensorGroup >> layers [
+	"This group's tensors organised into ordered per-depth GcLayers: an embeddings band (if any), the transformer layers in ascending index order, then a head/final band (if any). Each GcLayer carries a back-reference to this group so it can compute cohort regularity."
+	| byIndex realLayers ordered nonLayer embeds heads |
+	byIndex := self groupedBy: [ :t | t layerIndex ].
+	realLayers := ((byIndex keys reject: [ :k | k isNil ]) asSortedCollection asArray)
+		collect: [ :idx | GcLayer index: idx tensors: (byIndex at: idx) modelGroup: self ].
+	nonLayer := byIndex at: nil ifAbsent: [ nil ].
+	embeds := nonLayer isNil
+		ifTrue: [ #() ]
+		ifFalse: [ nonLayer items select: [ :t | t parsedName block = #embedding ] ].
+	heads := nonLayer isNil
+		ifTrue: [ #() ]
+		ifFalse: [ nonLayer items reject: [ :t | t parsedName block = #embedding ] ].
+	ordered := OrderedCollection new.
+	embeds isEmpty ifFalse: [ ordered add: (GcLayer index: nil tensors: embeds modelGroup: self) ].
+	ordered addAll: realLayers.
+	heads isEmpty ifFalse: [ ordered add: (GcLayer index: nil tensors: heads modelGroup: self) ].
+	^ GcLayerGroup withAll: ordered
+]
+
 { #category : 'views' }
 GcTensorGroup >> moduleSummaries [
 	^ ((self groupedBy: [ :t | t module ifNil: [ '(none)' ] ]) associations
 		asSortedCollection: [ :a :b | a key < b key ]) asArray
+]
+
+{ #category : 'gt - skyline' }
+GcTensorGroup >> paintSkylineOn: aMondrian [
+	"Vertical skyline: a caption, then one row per depth (embeddings band, layers by index, head/final band), with each layer's tensors nested as boxes coloured by regularity |z|."
+	| scores rows |
+	scores := self regularityScores.
+	rows := self layers items.
+	aMondrian nodes
+		stencil: [ :caption |
+			BlTextElement new
+				text: caption asRopedText;
+				padding: (BlInsets all: 4) ];
+		with: { self skylineCaption }.
+	aMondrian nodes
+		stencil: [ :layer | self skylineRowElementFor: layer ];
+		with: rows;
+		forEach: [ :layer |
+			aMondrian nodes
+				stencil: [ :tensor | self skylineBoxFor: tensor score: (scores at: tensor ifAbsent: [ nil ]) ];
+				with: layer tensors items ]
+		in: #boxes.
+	aMondrian layout vertical
+]
+
+{ #category : 'regularity' }
+GcTensorGroup >> regularityScoreFor: aTensor [
+	"This tensor's regularity score against its cohort, or nil if the tensor is not in this group."
+	^ self regularityScores at: aTensor ifAbsent: [ nil ]
+]
+
+{ #category : 'regularity' }
+GcTensorGroup >> regularityScores [
+	"An IdentityDictionary tensor -> GcRegularityScore. For each (module, role) cohort, use the sampled-mean metric when EVERY member already has cached stats (never fetches), otherwise the structural paramCount metric; z is population-standardised within the cohort. Recomputed on demand so it reflects the current warm-up state."
+	| scores byCohort |
+	scores := IdentityDictionary new.
+	byCohort := self groupedBy: [ :t | self cohortKeyFor: t ].
+	byCohort valuesDo: [ :cohort |
+		| members useValue metric values n mean std |
+		members := cohort asArray.
+		useValue := members allSatisfy: [ :t | t hasStats ].
+		metric := useValue ifTrue: [ #mean ] ifFalse: [ #paramCount ].
+		values := members collect: [ :t | useValue ifTrue: [ t cachedStats mean ] ifFalse: [ t paramCount ] ].
+		n := values size.
+		mean := n = 0 ifTrue: [ 0 ] ifFalse: [ (values inject: 0 into: [ :a :b | a + b ]) / n ].
+		std := n = 0
+			ifTrue: [ 0 ]
+			ifFalse: [ ((values inject: 0 into: [ :a :b | a + ((b - mean) squared) ]) / n) sqrt ].
+		members withIndexDo: [ :t :i |
+			scores at: t put: (GcRegularityScore
+				tensor: t
+				metric: metric
+				value: (values at: i)
+				cohortMean: mean
+				cohortStd: std
+				cohortSize: n) ] ].
+	^ scores
+]
+
+{ #category : 'gt - skyline' }
+GcTensorGroup >> skylineBoxFor: aTensor score: aScore [
+	| side color |
+	side := (((aTensor byteSize + 1) sqrt / 22.0) max: 6.0) min: 46.0.
+	color := aScore isNil ifTrue: [ Color lightGray ] ifFalse: [ aScore skylineColor ].
+	^ BlElement new
+		background: color;
+		border: (BlBorder paint: (Color gray alpha: 0.5) width: 0.5);
+		margin: (BlInsets all: 1);
+		size: side @ side;
+		yourself
+]
+
+{ #category : 'gt - skyline' }
+GcTensorGroup >> skylineCaption [
+	"An honest one-line statement of what the skyline colours mean, with the current sampling coverage."
+	| scores total valueCount |
+	scores := self regularityScores.
+	total := scores size.
+	valueCount := scores values count: [ :s | s isValueMetric and: [ s hasCohort ] ].
+	^ 'Skyline -- colour = |z| of sampled mean within (module,role) cohort; ' , valueCount printString , '/' , total printString , ' value-sampled, rest grey (structural only). Box size proportional to sqrt(bytes).'
+]
+
+{ #category : 'gt - skyline' }
+GcTensorGroup >> skylineRowElementFor: aLayer [
+	| label boxes |
+	label := BlTextElement new
+		text: aLayer label asRopedText;
+		padding: (BlInsets all: 3).
+	boxes := BlElement new
+		layout: BlLinearLayout horizontal;
+		padding: (BlInsets all: 1);
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ].
+	boxes graph beChildrenContainer: #boxes.
+	^ BlElement new
+		layout: BlLinearLayout horizontal;
+		padding: (BlInsets all: 1);
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+		addChildren: { label. boxes };
+		yourself
 ]
 
 { #category : 'analyzing' }
@@ -177,4 +317,23 @@ GcTensorGroup >> totalBytes [
 { #category : 'aggregating' }
 GcTensorGroup >> totalParams [
 	^ self inject: 0 into: [ :sum :t | sum + t paramCount ]
+]
+
+{ #category : 'regularity' }
+GcTensorGroup >> warmDefaultCohort [
+	"Warm the cheapest per-layer cohort's stats so the skyline's value-metric colouring becomes real. Returns the number of tensors warmed."
+	| m |
+	m := self defaultWarmModule.
+	^ m isNil ifTrue: [ 0 ] ifFalse: [ self warmStatsForModule: m ]
+]
+
+{ #category : 'regularity' }
+GcTensorGroup >> warmStatsForModule: aModuleString [
+	"Bounded warm-up: compute (fetch + decode) Tier-1 stats for every sampleable tensor whose module is aModuleString that is not already cached -- one cohort only (e.g. ~30 layernorm vectors), sequential. Returns the number warmed. Never warms everything."
+	| count |
+	count := 0.
+	self items do: [ :t |
+		(t module = aModuleString and: [ t supportsSampling and: [ t hasStats not ] ])
+			ifTrue: [ t stats. count := count + 1 ] ].
+	^ count
 ]
