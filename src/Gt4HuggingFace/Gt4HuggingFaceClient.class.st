@@ -108,6 +108,24 @@ Gt4HuggingFaceClient >> rangeBytesFrom: aUrl start: startInt end: endInt [
 	^ client response contents
 ]
 
+{ #category : 'private' }
+Gt4HuggingFaceClient >> rangeBytesIfPresentFrom: aUrl start: startInt end: endInt [
+	"A Range GET that returns nil when the file is absent (404), and raises a clear message for gated repos (401/403). Otherwise like rangeBytesFrom:start:end: (200/206 -> bytes)."
+	| client code |
+	client := self newClient.
+	client enforceHttpSuccess: false.
+	client beBinary.
+	client headerAt: 'Range' put: ('bytes=' , startInt printString , '-' , endInt printString).
+	client url: aUrl.
+	client get.
+	code := client response code.
+	(code = 200 or: [ code = 206 ]) ifTrue: [ ^ client response contents ].
+	code = 404 ifTrue: [ ^ nil ].
+	(code = 401 or: [ code = 403 ]) ifTrue: [
+		^ self error: 'gated repo -- a HuggingFace token is required for ' , aUrl ].
+	^ self error: 'Unexpected HTTP status ' , code printString , ' for ranged GET'
+]
+
 { #category : 'urls' }
 Gt4HuggingFaceClient >> resolveUrlFor: aRepoId file: aFileName [
 	^ baseUrl, '/', aRepoId, '/resolve/main/', aFileName
@@ -127,6 +145,43 @@ Gt4HuggingFaceClient >> safetensorsHeaderString: aRepoId file: aFileName [
 	headerLength := self class headerLengthFromBytes: first8.
 	headerBytes := self rangeBytesFrom: url start: 8 end: 8 + headerLength - 1.
 	^ headerBytes utf8Decoded
+]
+
+{ #category : 'api - safetensors' }
+Gt4HuggingFaceClient >> safetensorsHeaderStringIfPresent: aRepoId file: aFileName [
+	"Like safetensorsHeaderString:file: but returns nil when the file is absent (404), so callers can probe for model.safetensors before falling back to the shard index. Raises a clear message for gated repos."
+	| url first8 headerLength headerBytes |
+	url := self resolveUrlFor: aRepoId file: aFileName.
+	first8 := self rangeBytesIfPresentFrom: url start: 0 end: 7.
+	first8 ifNil: [ ^ nil ].
+	headerLength := self class headerLengthFromBytes: first8.
+	headerBytes := self rangeBytesFrom: url start: 8 end: 8 + headerLength - 1.
+	^ headerBytes utf8Decoded
+]
+
+{ #category : 'api - safetensors' }
+Gt4HuggingFaceClient >> safetensorsIndex: aRepoId [
+	"The parsed model.safetensors.index.json -- a Dictionary with keys 'weight_map' (tensorName -> shardFile) and 'metadata' (e.g. total_size) -- or nil if the repo has no index (404). Raises a clear message for gated repos. Generic: no Gc types."
+	| string |
+	string := self safetensorsIndexString: aRepoId.
+	^ string ifNotNil: [ STONJSON fromString: string ]
+]
+
+{ #category : 'api - safetensors' }
+Gt4HuggingFaceClient >> safetensorsIndexString: aRepoId [
+	"Fetch model.safetensors.index.json as a String. Returns nil when the repo has no index (404). Raises a clear message for gated repos (401/403). No weights downloaded (I5)."
+	| url client code |
+	url := self resolveUrlFor: aRepoId file: 'model.safetensors.index.json'.
+	client := self newClient.
+	client enforceHttpSuccess: false.
+	client url: url.
+	client get.
+	code := client response code.
+	code = 200 ifTrue: [ ^ client response contents ].
+	code = 404 ifTrue: [ ^ nil ].
+	(code = 401 or: [ code = 403 ]) ifTrue: [
+		^ self error: 'gated repo -- a HuggingFace token is required for the safetensors index of ' , aRepoId ].
+	^ self error: 'Unexpected HTTP status ' , code printString , ' fetching safetensors index for ' , aRepoId
 ]
 
 { #category : 'accessing' }

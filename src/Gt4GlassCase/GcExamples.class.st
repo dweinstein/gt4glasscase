@@ -831,6 +831,81 @@ GcExamples >> scatterUsesMergeRankWhenMergeListAttached [
 	^ scan
 ]
 
+{ #category : 'examples - sharded' }
+GcExamples >> shardedResolutionRaisesClearErrorWhenNoSafetensors [
+	"When neither model.safetensors nor model.safetensors.index.json exists, a clear domain error names the safetensors-ish files present, or says the repo has no safetensors weights (GGUF/pytorch-only). Tested hermetically via the core message constructor."
+	<gtExample>
+	| ggufError mixedError |
+	ggufError := [ GcShardedSafetensorsFile
+		signalNoSafetensorsForRepository: 'someorg/gguf-only'
+		filesPresent: #('README.md' 'config.json' 'model.gguf').
+		nil ] on: Error do: [ :ex | ex ].
+	self assert: ggufError notNil.
+	self assert: (ggufError messageText includesSubstring: 'No safetensors weights').
+	self assert: (ggufError messageText includesSubstring: 'GGUF').
+	mixedError := [ GcShardedSafetensorsFile
+		signalNoSafetensorsForRepository: 'someorg/odd'
+		filesPresent: #('README.md' 'consolidated.safetensors').
+		nil ] on: Error do: [ :ex | ex ].
+	self assert: mixedError notNil.
+	self assert: (mixedError messageText includesSubstring: 'consolidated.safetensors').
+	^ ggufError
+]
+
+{ #category : 'examples - sharded' }
+GcExamples >> shardedUnionFromSyntheticIndex [
+	"Assemble a sharded union hermetically from a synthetic index weight_map that routes tensors across three numbered shards (each with a DISTINCT byteDataOffset) plus one ODD-named extra file (weights-mtp.safetensors, no numbers). Proves: union tensor count = sum across shards = distinct weight_map keys; the naming-agnostic path handles the odd extra; each tensor reports its owning shard. No network."
+	<gtExample>
+	| byName weightMap union probe |
+	byName := Dictionary new.
+	byName at: 'model-00001-of-00003.safetensors' put: (self syntheticShardFileNamed: 'model-00001-of-00003.safetensors' floatTensors: { 'model.embed_tokens.weight' -> { 1.0. 2.0. 3.0. 4.0 }. 'model.layers.0.self_attn.q_proj.weight' -> { 0.5. 0.25 } } dataOffset: 0).
+	byName at: 'model-00002-of-00003.safetensors' put: (self syntheticShardFileNamed: 'model-00002-of-00003.safetensors' floatTensors: { 'model.layers.1.self_attn.q_proj.weight' -> { -1.0. -2.0 }. 'model.layers.1.mlp.gate_proj.weight' -> { 9.0. 8.0. 7.0 } } dataOffset: 128).
+	byName at: 'model-00003-of-00003.safetensors' put: (self syntheticShardFileNamed: 'model-00003-of-00003.safetensors' floatTensors: { 'lm_head.weight' -> { 0.1. 0.2 }. 'probe.weight' -> { 42.5. -7.25. 100.0 } } dataOffset: 300).
+	byName at: 'weights-mtp.safetensors' put: (self syntheticShardFileNamed: 'weights-mtp.safetensors' floatTensors: { 'model.mtp.weight' -> { 5.0 } } dataOffset: 64).
+	weightMap := Dictionary new.
+	weightMap at: 'model.embed_tokens.weight' put: 'model-00001-of-00003.safetensors'.
+	weightMap at: 'model.layers.0.self_attn.q_proj.weight' put: 'model-00001-of-00003.safetensors'.
+	weightMap at: 'model.layers.1.self_attn.q_proj.weight' put: 'model-00002-of-00003.safetensors'.
+	weightMap at: 'model.layers.1.mlp.gate_proj.weight' put: 'model-00002-of-00003.safetensors'.
+	weightMap at: 'lm_head.weight' put: 'model-00003-of-00003.safetensors'.
+	weightMap at: 'probe.weight' put: 'model-00003-of-00003.safetensors'.
+	weightMap at: 'model.mtp.weight' put: 'weights-mtp.safetensors'.
+	union := GcShardedSafetensorsFile
+		fromWeightMap: weightMap
+		metadata: (Dictionary new at: 'total_size' put: 999; yourself)
+		path: 'synthetic/model.safetensors.index.json'
+		shardBuilder: [ :fileName | byName at: fileName ].
+	self assert: union shardCount equals: 4.
+	self assert: union tensorCount equals: 7.
+	self assert: union tensorCount equals: weightMap size.
+	self assert: (union shards inject: 0 into: [ :sum :sh | sum + sh tensorCount ]) equals: 7.
+	self assert: (union shards anySatisfy: [ :sh | sh fileName = 'weights-mtp.safetensors' ]).
+	self assert: (union tensors anySatisfy: [ :t | t name = 'model.mtp.weight' ]).
+	probe := union tensors detect: [ :t | t name = 'probe.weight' ].
+	self assert: probe file fileName equals: 'model-00003-of-00003.safetensors'.
+	^ union
+]
+
+{ #category : 'examples - sharded' }
+GcExamples >> shardedUnionRoutesBytesToOwningShard [
+	"THE core correctness property: decoding a tensor that physically lives in a non-first shard must Range-read from THAT shard's provider at THAT shard's byteDataOffset. Decode a known planted value from shard #3 (offset 300) and a value from shard #2 (offset 128) through the union and assert both are correct. If routing used one global offset/provider these would be garbage or out of bounds."
+	<gtExample>
+	| union probe probeSlice shard2Tensor shard2Slice |
+	union := self shardedUnionFromSyntheticIndex.
+	probe := union tensors detect: [ :t | t name = 'probe.weight' ].
+	self assert: probe file byteDataOffset equals: 300.
+	probeSlice := probe sliceFromElement: 0 count: 3.
+	self assert: (probeSlice values first closeTo: 42.5).
+	self assert: (probeSlice values second closeTo: -7.25).
+	self assert: (probeSlice values third closeTo: 100.0).
+	shard2Tensor := union tensors detect: [ :t | t name = 'model.layers.1.mlp.gate_proj.weight' ].
+	self assert: shard2Tensor file byteDataOffset equals: 128.
+	shard2Slice := shard2Tensor sliceFromElement: 0 count: 3.
+	self assert: (shard2Slice values first closeTo: 9.0).
+	self assert: (shard2Slice values third closeTo: 7.0).
+	^ probeSlice
+]
+
 { #category : 'examples - signal flow' }
 GcExamples >> signalFlowFromArchitectureIsInferredCanonical [
 	"With only a config-derived GcArchitecture (no tensor names), the fallback draws the canonical llama-style wiring, marked inferred, with the GQA head split annotated from the config."
@@ -1123,6 +1198,34 @@ GcExamples >> syntheticModelHeaderLayers: nLayers experts: expertsPerLayer [
 	add value: 'model.norm.weight' value: { hidden }.
 	add value: 'lm_head.weight' value: { 32000. hidden }.
 	^ header
+]
+
+{ #category : 'fixtures - sharded' }
+GcExamples >> syntheticShardFileNamed: aName floatTensors: anOrderedAssocs dataOffset: anOffset [
+	"A hermetic synthetic safetensors shard: F32 tensors laid out contiguously, wired to an in-memory bytes provider whose data region begins at anOffset -- a DISTINCT byteDataOffset per shard, so per-shard byte routing is provable. anOrderedAssocs: an ordered collection of name -> arrayOfFloats. Real bytes decode through the sampling path with no network."
+	| header dataBuf offset filler buf file |
+	header := Dictionary new.
+	dataBuf := ByteArray new.
+	offset := 0.
+	anOrderedAssocs do: [ :assoc |
+		| bytes |
+		bytes := ByteArray new.
+		assoc value do: [ :f | bytes := bytes , (self f32LeBytes: f) ].
+		header at: assoc key put: (Dictionary new
+			at: 'dtype' put: 'F32';
+			at: 'shape' put: { assoc value size };
+			at: 'data_offsets' put: { offset. offset + bytes size };
+			yourself).
+		dataBuf := dataBuf , bytes.
+		offset := offset + bytes size ].
+	filler := ByteArray new: anOffset withAll: 0.
+	buf := filler , dataBuf.
+	file := GcSafetensorsFile new.
+	file path: aName.
+	file parseHeaderDictionary: header.
+	file byteDataOffset: anOffset.
+	file bytesProvider: (GcInMemoryBytesProvider bytes: buf dataOffset: anOffset).
+	^ file
 ]
 
 { #category : 'examples-groups' }

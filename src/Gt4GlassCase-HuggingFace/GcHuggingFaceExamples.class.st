@@ -176,6 +176,24 @@ GcHuggingFaceExamples >> liveModelSourceComparison [
 	^ group
 ]
 
+{ #category : 'examples - sharded' }
+GcHuggingFaceExamples >> liveQwen25_7bShardedUnion [
+	"Load Qwen/Qwen2.5-7B-Instruct (4 standard-named shards) as a sharded union via HTTP Range HEADERS only -- no weights downloaded (I5). Assert union tensor count == the distinct weight_map key count, and that >= 2 distinct shard files are represented among the tensors."
+	<gtExample>
+	<noTest>
+	| source union index weightMap shardFiles |
+	source := GcHuggingFaceModelSource forRepository: 'Qwen/Qwen2.5-7B-Instruct'.
+	union := source safetensorsFile.
+	self assert: (union isKindOf: GcShardedSafetensorsFile).
+	index := source client safetensorsIndex: 'Qwen/Qwen2.5-7B-Instruct'.
+	weightMap := index at: 'weight_map'.
+	self assert: union tensorCount equals: weightMap size.
+	self assert: union shardCount >= 4.
+	shardFiles := (union tensors collect: [ :t | t file fileName ]) asSet.
+	self assert: shardFiles size >= 2.
+	^ union
+]
+
 { #category : 'examples-live' }
 GcHuggingFaceExamples >> liveSafetensorsHeader [
 	"Fetch only the safetensors header via HTTP Range and materialize real GcTensorRefs -- no weights downloaded."
@@ -186,6 +204,35 @@ GcHuggingFaceExamples >> liveSafetensorsHeader [
 	self assert: file tensorCount > 50.
 	self assert: file tensors first byteSize > 0.
 	^ file
+]
+
+{ #category : 'examples - sharded' }
+GcHuggingFaceExamples >> liveSmolLm2SingleFileRegression [
+	"Regression: a single-file model still resolves to a plain GcSafetensorsFile (fast path, NOT a sharded union) -- 272 tensors, unchanged. Headers only (I5)."
+	<gtExample>
+	<noTest>
+	| source file |
+	source := GcHuggingFaceModelSource forRepository: 'HuggingFaceTB/SmolLM2-135M'.
+	file := source safetensorsFile.
+	self assert: (file isKindOf: GcShardedSafetensorsFile) not.
+	self assert: (file isKindOf: GcSafetensorsFile).
+	self assert: file tensorCount equals: 272.
+	^ file
+]
+
+{ #category : 'examples - sharded' }
+GcHuggingFaceExamples >> liveTSearchShardedUnion [
+	"t-tech/T-Search: odd-stem numbered shards (model.safetensors-NNNNN-of-.. with .safetensors mid-name) PLUS an unnumbered model-mtp.safetensors MTP head. model.safetensors alone 404s; the naming-agnostic union (shard list = unique weight_map values) loads all files. Assert it now loads, spans 15 files, and includes the odd mtp extra. Headers only (I5)."
+	<gtExample>
+	<noTest>
+	| source union |
+	source := GcHuggingFaceModelSource forRepository: 't-tech/T-Search'.
+	union := source safetensorsFile.
+	self assert: (union isKindOf: GcShardedSafetensorsFile).
+	self assert: union shardCount >= 15.
+	self assert: (union shards anySatisfy: [ :sh | sh fileName includesSubstring: 'mtp' ]).
+	self assert: union tensorCount > 100.
+	^ union
 ]
 
 { #category : 'examples-live' }

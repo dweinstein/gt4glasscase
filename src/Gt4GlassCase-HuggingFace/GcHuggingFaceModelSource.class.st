@@ -33,6 +33,17 @@ GcHuggingFaceModelSource >> architectureFor: aRepoId [
 	^ (self configFor: aRepoId) architecture
 ]
 
+{ #category : 'safetensors' }
+GcHuggingFaceModelSource >> buildSafetensorsFileFor: aRepoId file: aFileName header: aHeader [
+	"Translate a generic safetensors header into a GcSafetensorsFile of GcTensorRefs, and wire a bytes provider so numeric views can sample tensor values on demand (I5: ranged reads only). The core class parses a plain Dictionary, so it stays decoupled from the HF client."
+	| file |
+	file := GcSafetensorsFile new.
+	file path: aRepoId , '/' , aFileName.
+	file parseHeaderDictionary: aHeader rawDictionary.
+	file bytesProvider: (GcHuggingFaceBytesProvider client: client repositoryId: aRepoId file: aFileName).
+	^ file
+]
+
 { #category : 'initialization' }
 GcHuggingFaceModelSource >> clearCache [
 	"Drop cached config/file/merge list so the next access re-fetches."
@@ -188,6 +199,17 @@ GcHuggingFaceModelSource >> gtScanUndertrainedActionFor: anAction [
 			aButton enqueueTask: (BlTaskAction new action: [
 				aButton phlow spawnObject: scan ]) ]
 				asAsyncFuture awaitWithUserBackgroundPriority ]
+]
+
+{ #category : 'gt views' }
+GcHuggingFaceModelSource >> gtShardsFor: aView [
+	"The physical shard breakdown. Fetches model.safetensors (or the shard index + shard headers) the first time this tab is opened, then cached. Single-file models show one shard."
+	<gtView>
+	^ aView forward
+		title: 'Shards';
+		priority: 6;
+		object: [ self safetensorsFile ];
+		view: #gtShardsFor:
 ]
 
 { #category : 'gt views' }
@@ -358,6 +380,14 @@ GcHuggingFaceModelSource >> printOn: aStream [
 	aStream nextPut: $)
 ]
 
+{ #category : 'safetensors' }
+GcHuggingFaceModelSource >> repositoryFileNames [
+	"The repo's top-level file paths (best-effort; empty on any error), used only to build a helpful 'no safetensors' message."
+	^ [ (client fileTree: repositoryId) collect: [ :each | each at: 'path' ] ]
+		on: Error
+		do: [ :e | #() ]
+]
+
 { #category : 'accessing' }
 GcHuggingFaceModelSource >> repositoryId [
 	^ repositoryId
@@ -368,10 +398,36 @@ GcHuggingFaceModelSource >> repositoryId: aString [
 	repositoryId := aString
 ]
 
-{ #category : 'convenience' }
+{ #category : 'safetensors' }
+GcHuggingFaceModelSource >> resolveSafetensorsFile [
+	"Resolve the model's safetensors weights. Fast path: the single model.safetensors (unchanged for single-file models). On 404: assemble the sharded union from model.safetensors.index.json (naming-agnostic, shard list = unique weight_map values). If neither exists: a clear domain error naming the safetensors-ish files present."
+	| headerString |
+	headerString := client safetensorsHeaderStringIfPresent: repositoryId file: 'model.safetensors'.
+	headerString ifNotNil: [
+		^ self
+			buildSafetensorsFileFor: repositoryId
+			file: 'model.safetensors'
+			header: (Gt4HuggingFaceSafetensorsHeader fromString: headerString) ].
+	^ self resolveShardedSafetensorsFile
+]
+
+{ #category : 'safetensors' }
+GcHuggingFaceModelSource >> resolveShardedSafetensorsFile [
+	"Assemble the sharded union from model.safetensors.index.json. Authoritative shard list = the UNIQUE VALUES of weight_map (naming-agnostic); one header Range read per distinct shard. No index either -> a clear domain error."
+	| index |
+	index := client safetensorsIndex: repositoryId.
+	index ifNil: [ ^ self signalNoSafetensors ].
+	^ GcShardedSafetensorsFile
+		fromWeightMap: (index at: 'weight_map')
+		metadata: (index at: 'metadata' ifAbsent: [ nil ])
+		path: repositoryId , '/model.safetensors.index.json'
+		shardBuilder: [ :fileName | self safetensorsFileFor: repositoryId file: fileName ]
+]
+
+{ #category : 'safetensors' }
 GcHuggingFaceModelSource >> safetensorsFile [
-	"The default model.safetensors, cached: header fetched once per source."
-	^ cachedFile ifNil: [ cachedFile := self safetensorsFile: 'model.safetensors' ]
+	"The model's safetensors tensors -- the single model.safetensors or the sharded union -- cached: headers fetched once per source."
+	^ cachedFile ifNil: [ cachedFile := self resolveSafetensorsFile ]
 ]
 
 { #category : 'convenience' }
@@ -379,16 +435,13 @@ GcHuggingFaceModelSource >> safetensorsFile: aFileName [
 	^ self safetensorsFileFor: repositoryId file: aFileName
 ]
 
-{ #category : 'api - safetensors' }
+{ #category : 'safetensors' }
 GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
-	"Translate the generic safetensors header into a GcSafetensorsFile of GcTensorRefs, and wire a bytes provider so numeric views can sample tensor values on demand (I5: ranged reads only). The core class parses a plain Dictionary, so it stays decoupled from the HF client."
-	| header file |
-	header := client safetensorsHeader: aRepoId file: aFileName.
-	file := GcSafetensorsFile new.
-	file path: aRepoId, '/', aFileName.
-	file parseHeaderDictionary: header rawDictionary.
-	file bytesProvider: (GcHuggingFaceBytesProvider client: client repositoryId: aRepoId file: aFileName).
-	^ file
+	"Fetch one physical safetensors file's header and build a GcSafetensorsFile wired for ranged sampling (I5)."
+	^ self
+		buildSafetensorsFileFor: aRepoId
+		file: aFileName
+		header: (client safetensorsHeader: aRepoId file: aFileName)
 ]
 
 { #category : 'undertrained tokens' }
@@ -399,6 +452,14 @@ GcHuggingFaceModelSource >> scanUndertrainedTokens [
 	candidateIds := (group anomalousTokens collect: [ :t | t tokenId ]) asArray.
 	candidateIds := candidateIds first: (candidateIds size min: 48).
 	^ self undertrainedScanForCandidateIds: candidateIds controlBandStart: 0 controlBandSize: 256
+]
+
+{ #category : 'safetensors' }
+GcHuggingFaceModelSource >> signalNoSafetensors [
+	"Neither model.safetensors nor its shard index exist. Delegate the (core, hermetic) message construction, supplying the repo's file list."
+	^ GcShardedSafetensorsFile
+		signalNoSafetensorsForRepository: repositoryId
+		filesPresent: self repositoryFileNames
 ]
 
 { #category : 'views' }

@@ -75,6 +75,17 @@ GcSafetensorsFile >> bytesProvider: anObject [
 	bytesProvider := anObject
 ]
 
+{ #category : 'accessing' }
+GcSafetensorsFile >> fileName [
+	"The bare file name (last path segment) -- provenance for a tensor's owning shard (I14)."
+	^ path
+		ifNil: [ '?' ]
+		ifNotNil: [
+			(path includes: $/)
+				ifTrue: [ path copyAfterLast: $/ ]
+				ifFalse: [ path ] ]
+]
+
 { #category : 'gt - search' }
 GcSafetensorsFile >> gtSearchTensorsFor: aSearch [
 	"Find a tensor by name substring straight from the file inspector (e.g. type q_proj)."
@@ -85,6 +96,20 @@ GcSafetensorsFile >> gtSearchTensorsFor: aSearch [
 		items: [ self tensors ];
 		itemName: [ :t | t name ];
 		filterBySubstring
+]
+
+{ #category : 'gt views' }
+GcSafetensorsFile >> gtShardsFor: aView [
+	"A single-file model is one shard. (GcShardedSafetensorsFile overrides with the real per-shard breakdown.)"
+	<gtView>
+	^ aView columnedList
+		title: 'Shards';
+		priority: 6;
+		items: [ self shards ];
+		column: 'Shard' text: [ :shard | shard fileName ];
+		column: 'Tensors' text: [ :shard | shard tensorCount ];
+		column: 'Bytes' text: [ :shard | shard totalTensorBytes ];
+		send: [ :shard | shard ]
 ]
 
 { #category : 'views' }
@@ -239,6 +264,12 @@ GcSafetensorsFile >> printOn: aStream [
 	aStream nextPutAll: ', '.
 	aStream print: self tensorCount.
 	aStream nextPutAll: ' tensors)'
+]
+
+{ #category : 'accessing' }
+GcSafetensorsFile >> shards [
+	"A single-file model is one shard: itself. Lets the 'Shards' view be uniform across single-file and sharded models."
+	^ { self }
 ]
 
 { #category : 'slack space' }
