@@ -13,6 +13,20 @@ GcGroupOfGroups >> defaultCohortStencil [
 	^ GcCohortStencil default
 ]
 
+{ #category : 'gt - views' }
+GcGroupOfGroups >> gtOverviewFor: aView [
+	"Drill-down overview: one row per inner group with its label, size and a headline number; click a row to open that group's own views (recursive drill-down without leaving the inspector)."
+	<gtView>
+	^ aView columnedList
+		title: 'Overview';
+		priority: 4;
+		items: [ self items ];
+		column: 'Group' text: [ :g | g printString ];
+		column: 'Size' text: [ :g | g size printString ];
+		column: 'Headline' text: [ :g | g headline ];
+		send: [ :g | g ]
+]
+
 { #category : 'views' }
 GcGroupOfGroups >> gtSmallMultiplesFor: aView [
 	<gtView>

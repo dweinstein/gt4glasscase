@@ -29,6 +29,24 @@ GcSliceGroup >> gtCohortsFor: aView [
 		column: 'Size' text: [ :g | g size printString ]
 ]
 
+{ #category : 'gt - views' }
+GcSliceGroup >> gtEffectVsNoiseFor: aView [
+	"Placeholder for the slice's signature view. The effect-vs-noise plot (per-cohort effect against its seed-only noise band) lands with P6.3; this hook reserves the view slot so the shape of the system is visible now."
+	<gtView>
+	^ aView explicit
+		title: 'Effect vs noise';
+		priority: 4;
+		stencil: [ BlElement new
+			layout: BlLinearLayout vertical;
+			constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+			padding: (BlInsets all: 12);
+			addChild: (BrLabel new
+				aptitude: BrGlamorousLabelAptitude;
+				text: 'effect-vs-noise plot lands with P6.3';
+				yourself);
+			yourself ]
+]
+
 { #category : 'accessing' }
 GcSliceGroup >> varyingAxis [
 	^ varyingAxis

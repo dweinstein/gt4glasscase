@@ -40,24 +40,61 @@ GcGroup >> derivationChain [
 	^ ops
 ]
 
-{ #category : 'views' }
+{ #category : 'accessing' }
+GcGroup >> derivations [
+	"The chain of GcDerivations from this group back toward a root, most recent first (empty at a root). Each carries the operation, the parent group and any parameters (I3)."
+	| chain g |
+	chain := OrderedCollection new.
+	g := self.
+	[ g notNil and: [ g derivation notNil ] ] whileTrue: [
+		chain add: g derivation.
+		g := g derivation parent ].
+	^ chain
+]
+
+{ #category : 'gt - views' }
 GcGroup >> gtDerivationFor: aView [
+	"How was this group made? The lineage chain from here back to a root; click a row to walk to the parent group (I3). Empty at a root."
 	<gtView>
 	^ aView columnedList
 		title: 'Derivation';
 		priority: 20;
-		items: [ self derivationChain ];
-		column: 'Operation' text: [ :op | op asString ]
+		items: [ self derivations ];
+		column: 'Operation' text: [ :d | d operation asString ];
+		column: 'Parent' text: [ :d | d parent printString ];
+		column: 'Parameters' text: [ :d | d parameters isEmpty ifTrue: [ '' ] ifFalse: [ d parameters printString ] ];
+		send: [ :d | d parent ]
 ]
 
-{ #category : 'views' }
+{ #category : 'gt - views' }
 GcGroup >> gtItemsFor: aView [
+	"What is in this group? One row per item; click a row to open the item itself."
 	<gtView>
 	^ aView columnedList
 		title: 'Items';
 		priority: 10;
 		items: [ self items ];
-		column: 'Item' text: [ :each | each printString ]
+		column: 'Item' text: [ :each | each printString ];
+		send: [ :each | each ]
+]
+
+{ #category : 'gt - views' }
+GcGroup >> gtStatisticsFor: aView [
+	"What does this group summarise to? The type-appropriate statistics object as metric/value rows; click a row to open the value. Empty-safe."
+	<gtView>
+	^ aView columnedList
+		title: 'Statistics';
+		priority: 8;
+		items: [ (self statistics associations asSortedCollection: [ :a :b | a key < b key ]) asArray ];
+		column: 'Metric' text: [ :assoc | assoc key asString ];
+		column: 'Value' text: [ :assoc | assoc value displayString ];
+		send: [ :assoc | assoc value ]
+]
+
+{ #category : 'accessing' }
+GcGroup >> headline [
+	"A one-line salient number for overviews and cells. Default: the item count; subclasses override with a domain-salient figure."
+	^ self size printString , ' items'
 ]
 
 { #category : 'testing' }

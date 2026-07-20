@@ -13,6 +13,32 @@ Class {
 	#package : 'Gt4GlassCase'
 }
 
+{ #category : 'gt - views' }
+GcHistogramBin class >> barChartElementFor: aBins subtitle: aSubtitle [
+	"A labelled horizontal-bar histogram element for a collection of GcHistogramBins -- the shared distribution visual (bar width = bin count, label = bin midpoint)."
+	| data maxCount widthScale barChart chartElement label |
+	data := GtPlotterDataGroup new values: aBins.
+	data := data labelled: [ :bin | bin midpoint printShowingDecimalPlaces: 2 ].
+	data := data background: [ :bin | Color blue alpha: 0.5 ].
+	maxCount := aBins inject: 1 into: [ :m :bin | m max: bin count ].
+	widthScale := GtPlotterLinearScale new domainFrom: 0 to: maxCount.
+	barChart := GtPlotterHorizontalBarChart new.
+	barChart barLabelSpacing: 120.
+	barChart barWidthScale: widthScale.
+	barChart barWidthData: [ :bin | bin count ].
+	barChart amountOfTicks: 4.
+	barChart with: data.
+	chartElement := barChart create.
+	label := BrLabel new aptitude: BrGlamorousLabelAptitude; text: aSubtitle; yourself.
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		padding: (BlInsets all: 5);
+		addChild: label;
+		addChild: chartElement;
+		yourself
+]
+
 { #category : 'instance creation' }
 GcHistogramBin class >> lowerBound: aLow upperBound: aHigh count: anInteger [
 	^ self new

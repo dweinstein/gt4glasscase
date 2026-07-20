@@ -58,6 +58,24 @@ GcHuggingFaceExamples >> liveLayerConsistency [
 	^ group
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveLayerValueDriftCurveHasEnoughPoints [
+	"Warm the cheapest per-layer cohort of SmolLM2-135M over bounded HTTP Range fetches (I5), then confirm the layer group's sampled-value drift curve has >= 25 measured layer points -- a real value curve across depth, not structural. Returns the layers GcLayerGroup."
+	<gtExample>
+	<noTest>
+	| file group module warmed layers points |
+	file := self source safetensorsFileFor: self repositoryId file: 'model.safetensors'.
+	group := file tensorGroup.
+	module := group defaultWarmModule.
+	self assert: module notNil.
+	warmed := group warmStatsForModule: module.
+	self assert: warmed > 0.
+	layers := group layers.
+	points := layers perLayerCurvePoints: [ :layer | layers sampledMeanForLayer: layer ].
+	self assert: points size >= 25.
+	^ layers
+]
+
 { #category : 'examples-live' }
 GcHuggingFaceExamples >> liveSafetensorsHeader [
 	"Fetch only the safetensors header via HTTP Range and materialize real GcTensorRefs -- no weights downloaded."

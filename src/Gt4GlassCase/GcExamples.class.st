@@ -8,6 +8,23 @@ Class {
 	#package : 'Gt4GlassCase'
 }
 
+{ #category : 'examples - groups' }
+GcExamples >> aggregateDistributionMergesSampledHistograms [
+	<gtExample>
+	"The aggregate distribution merges per-tensor histograms into one 40-bin histogram whose total count equals the pooled sample count, spanning the pooled value range [0, 10]."
+	| hA hB group merged total |
+	hA := (GcTensorStats fromValues: { 0.0. 0.0. 1.0. 1.0 }) histogram.
+	hB := (GcTensorStats fromValues: { 9.0. 10.0. 10.0 }) histogram.
+	group := GcTensorGroup new.
+	merged := group mergeHistograms: { hA. hB } binCount: 40.
+	self assert: merged size equals: 40.
+	total := merged inject: 0 into: [ :acc :bin | acc + bin count ].
+	self assert: total equals: 7.
+	self assert: merged first lowerBound equals: 0.0.
+	self assert: merged last upperBound equals: 10.0.
+	^ merged
+]
+
 { #category : 'examples - architecture compare' }
 GcExamples >> architectureComparisonMarksDifference [
 	<gtExample>
@@ -176,6 +193,26 @@ GcExamples >> completionGroupSampleIsReproducible [
 	^ sampleA
 ]
 
+{ #category : 'examples - groups' }
+GcExamples >> completionGroupWithOutcomes [
+	<gtExample>
+	"A synthetic completion group of 40 completions with varied token lengths and clean/truncated stops, for the verdict-rate and length-distribution views. Hermetic (I9): 30 clean stops of 40 -> a 0.75 clean-stop rate."
+	| group rate |
+	group := GcCompletionGroup new.
+	1 to: 40 do: [ :i |
+		group addItem: (GcCompletion new
+			run: nil;
+			text: 'completion ' , i printString;
+			tokenIds: (1 to: (5 + (i \\ 20))) asArray;
+			stopReason: (i \\ 4 = 0 ifTrue: [ #length ] ifFalse: [ #stop ]);
+			yourself) ].
+	self assert: group size equals: 40.
+	rate := group verdictRateBy: [ :c | c stopReason = #stop ].
+	self assert: rate successes equals: 30.
+	self assert: (rate proportion closeTo: 0.75).
+	^ group
+]
+
 { #category : 'examples-hypercube' }
 GcExamples >> coordinateHoldsAxes [
 	<gtExample>
@@ -240,6 +277,23 @@ GcExamples >> fileDigestConfigJson [
 	^ digest
 ]
 
+{ #category : 'examples - groups' }
+GcExamples >> findingGroupStatusBoard [
+	<gtExample>
+	"A synthetic finding group with mixed statuses renders a grouped status board (findings here are stubbed to just status + replications, which is all a status board needs)."
+	| group byStatus |
+	group := GcFindingGroup new.
+	group addItem: (GcFinding status: #open replications: 0).
+	group addItem: (GcFinding status: #open replications: 1).
+	group addItem: (GcFinding status: #replicated replications: 5).
+	group addItem: (GcFinding status: #refuted replications: 2).
+	self assert: group size equals: 4.
+	byStatus := group groupedBy: [ :f | f status ].
+	self assert: (byStatus at: #open) size equals: 2.
+	self assert: (byStatus at: #replicated) size equals: 1.
+	^ group
+]
+
 { #category : 'examples-groups' }
 GcExamples >> groupComparisonSharedAndUnique [
 	<gtExample>
@@ -266,6 +320,22 @@ GcExamples >> groupDerivationChain [
 	leaf := (group select: [ :a | a precision ~= #int4 ]) select: [ :a | a precision = #bf16 ].
 	self assert: leaf derivationChain equals: (OrderedCollection withAll: #(#select: #select:)).
 	^ leaf
+]
+
+{ #category : 'examples - groups' }
+GcExamples >> groupOfGroupsOverviewSendsInnerGroups [
+	<gtExample>
+	"Group-of-groups overview: partition a tensor group by module and confirm each row's object is the inner GROUP (recursive drill-down), each carrying a headline params number; the overview view resolves."
+	| group view firstInner |
+	group := self tensorGroupPartitionByModule.
+	self assert: (group isKindOf: GcGroupOfGroups).
+	self assert: group size equals: 3.
+	group items do: [ :inner | self assert: (inner isKindOf: GcGroup) ].
+	firstInner := group items first.
+	self assert: (firstInner headline includesSubstring: 'params').
+	view := group gtOverviewFor: GtPhlowView empty.
+	self assert: view notNil.
+	^ group
 ]
 
 { #category : 'examples-groups' }
@@ -298,6 +368,55 @@ GcExamples >> groupSmallMultiplesRendersCohorts [
 	cell := stencil elementFor: partitions items first context: context.
 	self assert: (cell isKindOf: BlElement).
 	^ partitions
+]
+
+{ #category : 'examples - groups' }
+GcExamples >> groupUniversalTrioResolvesForEverySubclass [
+	<gtExample>
+	"Acceptance (DW-17): every GcGroup subclass answers the universal trio -- items, statistics and derivation -- on an EMPTY instance without raising, each yielding a real (non-empty) view, and the underlying data paths are empty-safe."
+	| selectors subclasses |
+	selectors := #(gtItemsFor: gtStatisticsFor: gtDerivationFor:).
+	subclasses := GcGroup allSubclasses.
+	self assert: subclasses notEmpty.
+	subclasses do: [ :cls |
+		| inst |
+		inst := cls new.
+		self assert: inst items isEmpty.
+		self assert: inst statistics notNil.
+		self assert: inst derivations isEmpty.
+		selectors do: [ :sel |
+			| view |
+			view := inst perform: sel with: GtPhlowView empty.
+			self assert: view notNil.
+			self assert: (view isKindOf: GtPhlowEmptyView) not ] ].
+	^ subclasses
+]
+
+{ #category : 'examples - groups' }
+GcExamples >> layerCurveViewRendersWithPlantedDrift [
+	<gtExample>
+	"The per-layer structural curve has exactly one point per layer and surfaces a planted per-layer drift: layer 5 carries an oversized q_proj, so its total-params point is the series maximum. The composed view element is non-empty and the gtView resolves."
+	| group layerGroup points maxPoint element view |
+	group := GcTensorGroup new.
+	0 to: 7 do: [ :i |
+		group addItem: (GcTensorRef
+			name: 'model.layers.' , i printString , '.self_attn.q_proj.weight'
+			dtype: #bf16
+			shape: (i = 5 ifTrue: [ #(256 256) ] ifFalse: [ #(64 64) ])).
+		group addItem: (GcTensorRef name: 'model.layers.' , i printString , '.self_attn.k_proj.weight' dtype: #bf16 shape: #(64 64)).
+		group addItem: (GcTensorRef name: 'model.layers.' , i printString , '.self_attn.v_proj.weight' dtype: #bf16 shape: #(64 64)) ].
+	layerGroup := group layers.
+	self assert: layerGroup size equals: 8.
+	points := layerGroup perLayerCurvePoints: [ :layer | layer totalParams ].
+	self assert: points size equals: 8.
+	maxPoint := points detectMax: [ :p | p at: #value ].
+	self assert: (maxPoint at: #layer) index equals: 5.
+	element := layerGroup curveElementForPoints: points valueTitle: 'Total params' subtitle: 'test'.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children size >= 2.
+	view := layerGroup gtPerLayerStructuralCurveFor: GtPhlowView empty.
+	self assert: view notNil.
+	^ layerGroup
 ]
 
 { #category : 'examples-provenance' }
@@ -740,6 +859,37 @@ GcExamples >> tokenizerSketch [
 	tok := GcTokenizer vocabSize: 151936.
 	self assert: tok vocabSize equals: 151936.
 	^ tok
+]
+
+{ #category : 'examples - groups' }
+GcExamples >> verdictRateWilsonIntervalIsExact [
+	<gtExample>
+	"The verdict rate over a synthetic completion group is a GcProportion with a 95% Wilson score interval. For 8 clean stops of 10 the point estimate is 0.8 and the Wilson bounds match the closed-form formula to 1e-9 (regression guard), landing near [0.490, 0.943]."
+	| group rate z n k phat denom center half expLower expUpper |
+	group := GcCompletionGroup new.
+	1 to: 10 do: [ :i |
+		group addItem: (GcCompletion new
+			run: nil;
+			text: 'c' , i printString;
+			stopReason: (i <= 8 ifTrue: [ #stop ] ifFalse: [ #length ]);
+			yourself) ].
+	rate := group verdictRateBy: [ :c | c stopReason = #stop ].
+	self assert: rate successes equals: 8.
+	self assert: rate total equals: 10.
+	self assert: (rate proportion closeTo: 0.8).
+	z := 1.96. n := 10. k := 8. phat := k / n.
+	denom := 1 + ((z * z) / n).
+	center := (phat + ((z * z) / (2 * n))) / denom.
+	half := (z / denom) * ((((phat * (1 - phat)) / n) + ((z * z) / (4 * n * n))) sqrt).
+	expLower := center - half.
+	expUpper := center + half.
+	self assert: (rate wilsonLower - expLower) abs < 1e-9.
+	self assert: (rate wilsonUpper - expUpper) abs < 1e-9.
+	self assert: (rate wilsonLower closeTo: 0.4901568).
+	self assert: (rate wilsonUpper closeTo: 0.9433191).
+	self assert: rate wilsonLower < rate proportion.
+	self assert: rate proportion < rate wilsonUpper.
+	^ rate
 ]
 
 { #category : 'examples' }

@@ -8,6 +8,12 @@ Class {
 	#package : 'Gt4GlassCase'
 }
 
+{ #category : 'computing' }
+GcTensorGroup >> aggregateHistogramBins: aCount [
+	"An aCount-bin histogram merged from the cached per-tensor histograms of every sampled tensor (from cached stats only, never fetches). Empty when nothing is sampled."
+	^ self mergeHistograms: (self sampledStatsTensors collect: [ :t | t cachedStats histogram ]) binCount: aCount
+]
+
 { #category : 'converting' }
 GcTensorGroup >> asTensorTree [
 	"Build the tensor-name hierarchy (root GcTensorTreeNode) by splitting each tensor's dotted name."
@@ -54,6 +60,33 @@ GcTensorGroup >> defaultWarmModule [
 	candidates do: [ :t |
 		totals at: t module put: (t byteSize + (totals at: t module ifAbsent: [ 0 ])) ].
 	^ (totals associations detectMin: [ :assoc | assoc value ]) key
+]
+
+{ #category : 'gt - views' }
+GcTensorGroup >> emptyDistributionElement [
+	"Placeholder shown when no tensor in the group has cached stats yet."
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		padding: (BlInsets all: 10);
+		addChild: (BrLabel new aptitude: BrGlamorousLabelAptitude; text: 'no sampled stats yet -- run the warm-up action'; yourself);
+		yourself
+]
+
+{ #category : 'gt - views' }
+GcTensorGroup >> gtAggregateDistributionFor: aView [
+	"What is the pooled value distribution across this group's sampled tensors? A horizontal-bar histogram merged from the cached per-tensor histograms (from cached stats only), labelled with how many tensors contributed. Empty until a warm-up runs."
+	<gtView>
+	^ aView explicit
+		title: 'Aggregate distribution';
+		priority: 4;
+		stencil: [ | bins sampled total |
+			sampled := self sampledStatsTensors size.
+			total := self size.
+			bins := self aggregateHistogramBins: 40.
+			bins isEmpty
+				ifTrue: [ self emptyDistributionElement ]
+				ifFalse: [ GcHistogramBin barChartElementFor: bins subtitle: 'distribution over ' , sampled printString , '/' , total printString , ' sampled tensors' ] ]
 ]
 
 { #category : 'views' }
@@ -125,19 +158,6 @@ GcTensorGroup >> gtSkylineFor: aView [
 ]
 
 { #category : 'views' }
-GcTensorGroup >> gtStatisticsFor: aView [
-	"Summary metrics for this tensor group."
-	<gtView>
-	^ aView columnedList
-		title: 'Statistics';
-		priority: 8;
-		items: [ (self statistics associations asSortedCollection: [ :a :b | a key < b key ]) asArray ];
-		column: 'Metric' text: [ :assoc | assoc key asString ];
-		column: 'Value' text: [ :assoc | assoc value displayString ];
-		send: [ :assoc | assoc value ]
-]
-
-{ #category : 'views' }
 GcTensorGroup >> gtTreeFor: aView [
 	"The tensor-name hierarchy (forwarded to the tree root)."
 	<gtView>
@@ -160,6 +180,12 @@ GcTensorGroup >> gtWarmSkylineActionFor: anAction [
 			[ self warmDefaultCohort.
 			  aButton enqueueTask: (BlTaskAction new action: [ aButton phlow fireViewUpdateWish ]) ]
 				asAsyncFuture awaitWithUserBackgroundPriority ]
+]
+
+{ #category : 'accessing' }
+GcTensorGroup >> headline [
+	"The salient number for a tensor group is its total parameter count."
+	^ self totalParams printString , ' params'
 ]
 
 { #category : 'grouping' }
@@ -192,6 +218,28 @@ GcTensorGroup >> layers [
 	ordered addAll: realLayers.
 	heads isEmpty ifFalse: [ ordered add: (GcLayer index: nil tensors: heads modelGroup: self) ].
 	^ GcLayerGroup withAll: ordered
+]
+
+{ #category : 'computing' }
+GcTensorGroup >> mergeHistograms: aHistograms binCount: aCount [
+	"Merge several per-tensor bin-lists into a single aCount-bin histogram over the pooled value range, re-binning each source bar into the merged bin that contains its midpoint. Total count is preserved. Returns an empty array when there is nothing to merge."
+	| histos lo hi width bins |
+	histos := aHistograms reject: [ :h | h isNil or: [ h isEmpty ] ].
+	histos isEmpty ifTrue: [ ^ #() ].
+	lo := (histos collect: [ :h | h first lowerBound ]) min.
+	hi := (histos collect: [ :h | h last upperBound ]) max.
+	hi = lo ifTrue: [ hi := lo + 1.0 ].
+	width := (hi - lo) / aCount.
+	bins := (1 to: aCount) collect: [ :i |
+		GcHistogramBin lowerBound: lo + ((i - 1) * width) upperBound: lo + (i * width) count: 0 ].
+	histos do: [ :h |
+		h do: [ :srcBin |
+			| idx target |
+			idx := ((srcBin midpoint - lo) / width) floor + 1.
+			idx := (idx max: 1) min: aCount.
+			target := bins at: idx.
+			target count: target count + srcBin count ] ].
+	^ bins
 ]
 
 { #category : 'views' }
@@ -255,6 +303,12 @@ GcTensorGroup >> regularityScores [
 				cohortStd: std
 				cohortSize: n) ] ].
 	^ scores
+]
+
+{ #category : 'accessing' }
+GcTensorGroup >> sampledStatsTensors [
+	"This group's tensors that already carry cached Tier-1 stats (never fetches)."
+	^ self items select: [ :t | t hasStats ]
 ]
 
 { #category : 'gt - skyline' }
