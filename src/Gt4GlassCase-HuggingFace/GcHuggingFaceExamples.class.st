@@ -176,6 +176,22 @@ GcHuggingFaceExamples >> liveModelSourceComparison [
 	^ group
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveQwen25SignalFlowIsHomogeneous [
+	"Qwen/Qwen2.5-7B-Instruct: a homogeneous single-tower transformer -> exactly one archetype (a faithful, not merely representative, diagram) with real dims. Headers only (I5)."
+	<gtExample>
+	<noTest>
+	| source flow |
+	source := GcHuggingFaceModelSource forRepository: 'Qwen/Qwen2.5-7B-Instruct'.
+	flow := GcSignalFlow fromTensorGroup: source tensorGroup architecture: source architecture.
+	self assert: flow archetypeCount equals: 1.
+	self assert: flow isHomogeneous.
+	self assert: flow modelStyleName equals: 'llama-style'.
+	self assert: (flow nodeLabels includes: 'q_proj').
+	self assert: flow towers size equals: 1.
+	^ flow
+]
+
 { #category : 'examples - sharded' }
 GcHuggingFaceExamples >> liveQwen25_7bShardedUnion [
 	"Load Qwen/Qwen2.5-7B-Instruct (4 standard-named shards) as a sharded union via HTTP Range HEADERS only -- no weights downloaded (I5). Assert union tensor count == the distinct weight_map key count, and that >= 2 distinct shard files are represented among the tensors."
@@ -206,6 +222,21 @@ GcHuggingFaceExamples >> liveSafetensorsHeader [
 	^ file
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveSmolLm2SignalFlowSingleArchetype [
+	"HuggingFaceTB/SmolLM2-135M (single-file): still one archetype spanning all 30 layers -- the previously-correct homogeneous case stays faithful. Headers only (I5)."
+	<gtExample>
+	<noTest>
+	| source flow |
+	source := GcHuggingFaceModelSource forRepository: 'HuggingFaceTB/SmolLM2-135M'.
+	flow := GcSignalFlow fromTensorGroup: source tensorGroup architecture: source architecture.
+	self assert: flow archetypeCount equals: 1.
+	self assert: flow isHomogeneous.
+	self assert: flow mainTower layerCount equals: 30.
+	self assert: flow modelStyleName equals: 'llama-style'.
+	^ flow
+]
+
 { #category : 'examples - sharded' }
 GcHuggingFaceExamples >> liveSmolLm2SingleFileRegression [
 	"Regression: a single-file model still resolves to a plain GcSafetensorsFile (fast path, NOT a sharded union) -- 272 tensors, unchanged. Headers only (I5)."
@@ -233,6 +264,39 @@ GcHuggingFaceExamples >> liveTSearchShardedUnion [
 	self assert: (union shards anySatisfy: [ :sh | sh fileName includesSubstring: 'mtp' ]).
 	self assert: union tensorCount > 100.
 	^ union
+]
+
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveTSearchSignalFlowSegmentsTowers [
+	"t-tech/T-Search (a Qwen3.5-MoE vision-language model): the signal flow segments the LANGUAGE tower into its 2 distinct archetypes -- 30 linear-attention/SSM layers and 10 full softmax-attention layers, all MoE -- WITHOUT conflating conv1d with q_proj. The VISION tower and the MTP head are each drawn as their own separate strand (not merged into the language block), and the embedding dims are read from the real tensor shape (fixing the old bogus 2048x2048). Ground truth is the live weight_map, which corrects the design brief (2 archetypes, not 3; there is no separate hybrid layer). Fetches the index + shard headers only (I5). Returns the flow for rendering."
+	<gtExample>
+	<noTest>
+	| source flow main lin split labels vision mtp |
+	source := GcHuggingFaceModelSource forRepository: 't-tech/T-Search'.
+	flow := GcSignalFlow fromTensorGroup: source tensorGroup.
+	main := flow mainTower.
+	self assert: main name equals: 'language'.
+	self assert: main archetypeCount equals: 2.
+	lin := main archetypes detect: [ :a | a attentionKind = #linear ].
+	split := main archetypes detect: [ :a | a attentionKind = #split ].
+	self assert: (main archetypes allSatisfy: [ :a | a isMoE ]).
+	self assert: (lin attentionTensors anySatisfy: [ :t | (lin moduleLeafOf: t) = 'conv1d' ]).
+	self assert: (lin attentionTensors anySatisfy: [ :t | (lin moduleLeafOf: t) = 'q_proj' ]) not.
+	self assert: (split attentionTensors anySatisfy: [ :t | (split moduleLeafOf: t) = 'q_proj' ]).
+	self assert: (split attentionTensors anySatisfy: [ :t | (split moduleLeafOf: t) = 'conv1d' ]) not.
+	vision := flow auxiliaryTowers detect: [ :t | t name = 'vision' ].
+	self assert: vision layerCount > 20.
+	mtp := flow auxiliaryTowers detect: [ :t | t name = 'mtp' ].
+	self assert: mtp layerCount equals: 1.
+	labels := flow nodeLabels.
+	self assert: (labels includes: 'vision tower').
+	self assert: (labels includes: 'mtp tower').
+	self assert: (labels includes: 'mtp head').
+	self assert: (labels includes: 'conv1d').
+	self assert: (labels includes: 'q_proj').
+	self assert: ((flow nodes detect: [ :n | n kind = #embedding and: [ n label = 'embed_tokens' ] ]) annotation includesSubstring: 'x 2048').
+	self assert: flow isHomogeneous not.
+	^ flow
 ]
 
 { #category : 'examples-live' }

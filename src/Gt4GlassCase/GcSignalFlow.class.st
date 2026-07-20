@@ -16,7 +16,8 @@ Class {
 		'inferred',
 		'attentionFused',
 		'mlpGated',
-		'nodesCache'
+		'nodesCache',
+		'towers'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -38,6 +39,13 @@ GcSignalFlow class >> fromTensorGroup: aTensorGroup [
 GcSignalFlow class >> fromTensorGroup: aTensorGroup architecture: anArchitecture [
 	"Authoritative wiring from tensor names, enriched with head/hidden facts from anArchitecture (may be nil)."
 	^ self new setTensorGroup: aTensorGroup architecture: anArchitecture inferred: false
+]
+
+{ #category : 'honesty' }
+GcSignalFlow >> archetypeCount [
+	"How many distinct layer archetypes the main tower has. 1 == homogeneous (the diagram is exact); more == the diagram shows one representative block per archetype."
+	self isInferred ifTrue: [ ^ 1 ].
+	^ self mainTower ifNil: [ 0 ] ifNotNil: [ :t | t archetypeCount ]
 ]
 
 { #category : 'accessing' }
@@ -64,6 +72,37 @@ GcSignalFlow >> attentionHeadNote [
 	^ attentionFused == true ifTrue: [ 'fused qkv' ] ifFalse: [ 'multi-head (split q/k/v)' ]
 ]
 
+{ #category : 'structure' }
+GcSignalFlow >> auxHeadModuleSummary: aGroup [
+	^ 'modules: ' , (', ' join: ((aGroup asArray collect: [ :t | self moduleLeafOf: t ]) asSet asSortedCollection))
+]
+
+{ #category : 'structure' }
+GcSignalFlow >> auxiliaryHeadGroups [
+	"Auxiliary prediction heads (e.g. an MTP head under the 'mtp' prefix): no-layer tensors that live in a distinct sub-namespace (a dotted prefix, i.e. >= 3 path parts) and are NOT the token embedding, final norm, lm_head, nor part of any layered tower. Grouped by top-level prefix; each value is a GcTensorGroup. Top-level trunk scalars (wte / wpe / ln_f) are 2-part and never counted."
+	| claimed groups result |
+	claimed := IdentitySet new.
+	self claimSignatureOf: self embeddingTensor into: claimed.
+	self claimSignatureOf: self finalNormTensor into: claimed.
+	self claimSignatureOf: self lmHeadTensor into: claimed.
+	groups := Dictionary new.
+	tensorGroup do: [ :t |
+		(t layerIndex isNil
+			and: [ (self partsOf: t) size >= 3
+			and: [ (claimed includes: t) not
+			and: [ (self belongsToTowerPrefix: t) not ] ] ])
+			ifTrue: [ (groups at: (self partsOf: t) first ifAbsentPut: [ OrderedCollection new ]) add: t ] ].
+	result := Dictionary new.
+	groups keysAndValuesDo: [ :k :oc | result at: k put: (GcTensorGroup withAll: oc) ].
+	^ result
+]
+
+{ #category : 'accessing' }
+GcSignalFlow >> auxiliaryTowers [
+	"Non-main layered towers (e.g. a vision tower) -- rendered as their own labelled strands."
+	^ self towers reject: [ :t | t isMain ]
+]
+
 { #category : 'rendering' }
 GcSignalFlow >> backgroundColorForKind: aKind [
 	aKind = #embedding ifTrue: [ ^ Color blue alpha: 0.12 ].
@@ -74,82 +113,132 @@ GcSignalFlow >> backgroundColorForKind: aKind [
 	aKind = #finalNorm ifTrue: [ ^ Color gray alpha: 0.18 ].
 	aKind = #add ifTrue: [ ^ Color red alpha: 0.12 ].
 	aKind = #legend ifTrue: [ ^ Color purple alpha: 0.10 ].
+	aKind = #tower ifTrue: [ ^ Color purple alpha: 0.16 ].
+	aKind = #auxHead ifTrue: [ ^ Color magenta alpha: 0.12 ].
 	^ Color white
 ]
 
-{ #category : 'derivation' }
+{ #category : 'structure' }
+GcSignalFlow >> belongsToTowerPrefix: aTensor [
+	"True when a no-layer tensor sits under one of the layered towers' prefixes (e.g. a vision patch_embed / merger) -- such tensors belong to that tower's strand, not to an auxiliary head."
+	^ self towers anySatisfy: [ :tw |
+		tw prefix notEmpty and: [ aTensor name beginsWith: tw prefix , '.' ] ]
+]
+
+{ #category : 'building' }
+GcSignalFlow >> buildArchetypeBlockFor: arch into: nodes isMain: aBoolean [
+	"Build one representative block for an archetype (norm -> attention -> add -> norm -> MLP -> add) with the two bypass edges. Returns { entryNodes. exitNode }."
+	| norms preRep postRep preNorm postNorm attn mlp attnInputs attnOutputs mlpInputs mlpOutputs attnAdd mlpAdd mlpEntry entryNodes |
+	norms := self uniqueLeafRepsFrom: (arch normTensors asSortedCollection: [ :a :b | a name < b name ]).
+	preRep := norms isEmpty ifTrue: [ nil ] ifFalse: [ norms first ].
+	postRep := norms size >= 2 ifTrue: [ norms second ] ifFalse: [ nil ].
+	preNorm := preRep ifNotNil: [ self nodeLabeled: (self moduleLeafOf: preRep) kind: #norm payload: (arch cohortForTensor: preRep) annotation: 'pre-attention norm' ].
+	preNorm ifNotNil: [ preNorm badge: arch badgeString. nodes add: preNorm ].
+	attn := self buildAttentionNodesFor: arch into: nodes.
+	attnInputs := attn first. attnOutputs := attn second.
+	attnAdd := self nodeLabeled: '(+) residual' kind: #add payload: nil annotation: 'attention add'.
+	nodes add: attnAdd.
+	attnInputs do: [ :n | attnOutputs isEmpty ifTrue: [ n addForward: attnAdd ] ifFalse: [ attnOutputs do: [ :o | n addForward: o ] ] ].
+	attnOutputs do: [ :o | o addForward: attnAdd ].
+	preNorm ifNotNil: [
+		attnInputs notEmpty
+			ifTrue: [ attnInputs do: [ :n | preNorm addForward: n ] ]
+			ifFalse: [ attnOutputs notEmpty ifTrue: [ attnOutputs do: [ :o | preNorm addForward: o ] ] ifFalse: [ preNorm addForward: attnAdd ] ].
+		preNorm addResidual: attnAdd ].
+	postRep ifNotNil: [
+		postNorm := self nodeLabeled: (self moduleLeafOf: postRep) kind: #norm payload: (arch cohortForTensor: postRep) annotation: 'pre-MLP norm'.
+		nodes add: postNorm. attnAdd addForward: postNorm ].
+	mlpEntry := postNorm ifNil: [ attnAdd ].
+	mlp := self buildMlpNodesFor: arch into: nodes.
+	mlpInputs := mlp first. mlpOutputs := mlp second.
+	mlpAdd := self nodeLabeled: '(+) residual' kind: #add payload: nil annotation: 'MLP add'.
+	nodes add: mlpAdd.
+	mlpInputs do: [ :n | mlpEntry addForward: n. mlpOutputs isEmpty ifTrue: [ n addForward: mlpAdd ] ifFalse: [ mlpOutputs do: [ :o | n addForward: o ] ] ].
+	mlpOutputs do: [ :o | o addForward: mlpAdd ].
+	mlpInputs isEmpty ifTrue: [ mlpEntry addForward: mlpAdd ].
+	attnAdd addResidual: mlpAdd.
+	entryNodes := preNorm notNil
+		ifTrue: [ OrderedCollection with: preNorm ]
+		ifFalse: [ attnInputs notEmpty ifTrue: [ attnInputs ] ifFalse: [ attnOutputs notEmpty ifTrue: [ attnOutputs ] ifFalse: [ OrderedCollection with: attnAdd ] ] ].
+	^ { entryNodes. mlpAdd }
+]
+
+{ #category : 'building' }
+GcSignalFlow >> buildAttentionNodesFor: arch into: nodes [
+	"Attention sublayer nodes for one archetype: real projection nodes, classified per family. Returns { inputNodes. outputNodes }."
+	| reps outputs inputs inputNodes outputNodes labelTarget |
+	reps := self uniqueLeafRepsFrom: arch attentionTensors.
+	outputs := reps select: [ :t | self isAttentionOutputLeaf: (self moduleLeafOf: t) ].
+	inputs := reps reject: [ :t | outputs includes: t ].
+	inputNodes := inputs collect: [ :t | self nodeLabeled: (self moduleLeafOf: t) kind: #attention payload: (arch cohortForTensor: t) annotation: nil ].
+	outputNodes := outputs collect: [ :t | self nodeLabeled: (self moduleLeafOf: t) kind: #attention payload: (arch cohortForTensor: t) annotation: nil ].
+	labelTarget := inputNodes isEmpty ifTrue: [ outputNodes ] ifFalse: [ inputNodes ].
+	labelTarget ifNotEmpty: [ :c | c first annotation: arch attentionKindLabel ].
+	nodes addAll: inputNodes; addAll: outputNodes.
+	^ { inputNodes. outputNodes }
+]
+
+{ #category : 'building' }
+GcSignalFlow >> buildAuxiliaryTowerStrand: aTower into: nodes [
+	"Render a non-main tower (e.g. vision, or a small MTP head-tower) as its own labelled strand: title -> optional patch/pos embed -> archetype block(s) -> a node for the tower's remaining no-layer pieces (merger / MTP fc+norm glue). Never merged into the main chain."
+	| title prev embedCohort others posKeys |
+	posKeys := #('patch' 'pos_embed' 'position_embed').
+	title := self nodeLabeled: aTower name , ' tower' kind: #tower payload: aTower annotation: aTower summaryString.
+	nodes add: title.
+	prev := title.
+	embedCohort := self towerNoLayerCohortOf: aTower matchingAny: posKeys.
+	embedCohort isEmpty ifFalse: [ | pn |
+		pn := self nodeLabeled: 'patch/pos embed' kind: #embedding payload: embedCohort annotation: nil.
+		nodes add: pn. prev addForward: pn. prev := pn ].
+	aTower archetypes do: [ :arch | | block |
+		block := self buildArchetypeBlockFor: arch into: nodes isMain: false.
+		(block first) do: [ :n | prev addForward: n ].
+		prev := block second ].
+	others := self towerNoLayerOthersOf: aTower excludingAny: posKeys.
+	others isEmpty ifFalse: [ | on |
+		on := self nodeLabeled: aTower name , ' head' kind: #auxHead payload: others annotation: (self auxHeadModuleSummary: others).
+		nodes add: on. prev addForward: on ].
+	^ self
+]
+
+{ #category : 'building' }
 GcSignalFlow >> buildFromTensors [
-	"Derive the block wiring from the module names present in the representative layer's cohort, then wire the global chain and the residual bypass edges."
-	| nodes l0 attn mlp norms attnReps attnOutRep attnInReps mlpReps mlpOutRep mlpInReps preRep postRep embedT finalT headT tied legend tokens embed preNorm attnInNodes attnOut attnAdd postNorm mlpInNodes mlpOut mlpAdd finalNorm head logits attnEntry mlpEntry |
+	"Segment the checkpoint into towers + non-layer pieces, then assemble the graph: token ids -> embedding -> the main tower's archetype blocks (one per distinct layer kind) -> final norm -> lm_head -> logits, plus any auxiliary heads (MTP) and auxiliary towers (vision) as their own strands. No cross-archetype/cross-tower merging."
+	| nodes badge tokens embed prev main finalNorm head logits embedT finalT headT |
+	self ensureSegmented.
 	nodes := OrderedCollection new.
-	l0 := self layerZeroTensors.
-	attn := l0 select: [ :t | | c | c := self containerOf: t. c notNil and: [ c includesSubstring: 'attn' ] ].
-	mlp := l0 select: [ :t | | c | c := self containerOf: t. c notNil and: [ (c includesSubstring: 'mlp') or: [ c includesSubstring: 'feed' ] ] ].
-	norms := l0 select: [ :t | (self containerOf: t) isNil and: [ self looksLikeNormLeaf: (self moduleLeafOf: t) ] ].
-	attnReps := self uniqueLeafRepsFrom: attn.
-	attnOutRep := attnReps detect: [ :t | self isAttentionOutputLeaf: (self moduleLeafOf: t) ] ifNone: [ attnReps isEmpty ifTrue: [ nil ] ifFalse: [ attnReps last ] ].
-	attnInReps := attnReps reject: [ :t | t == attnOutRep ].
-	attentionFused := attnInReps size <= 1.
-	mlpReps := self uniqueLeafRepsFrom: mlp.
-	mlpOutRep := mlpReps detect: [ :t | self isMlpOutputLeaf: (self moduleLeafOf: t) ] ifNone: [ mlpReps isEmpty ifTrue: [ nil ] ifFalse: [ mlpReps last ] ].
-	mlpInReps := mlpReps reject: [ :t | t == mlpOutRep ].
-	mlpGated := (mlpInReps anySatisfy: [ :t | (self moduleLeafOf: t) includesSubstring: 'gate' ]) or: [ mlpInReps size >= 2 ].
-	preRep := norms detect: [ :t | | m | m := self moduleLeafOf: t. (m includesSubstring: 'input') or: [ m includesSubstring: '_1' ] ] ifNone: [ norms isEmpty ifTrue: [ nil ] ifFalse: [ norms first ] ].
-	postRep := norms detect: [ :t | | m | m := self moduleLeafOf: t. (m includesSubstring: 'post') or: [ m includesSubstring: '_2' ] ] ifNone: [ norms size >= 2 ifTrue: [ (norms reject: [ :x | x == preRep ]) first ] ifFalse: [ nil ] ].
+	main := self mainTower.
 	embedT := self embeddingTensor.
 	finalT := self finalNormTensor.
 	headT := self lmHeadTensor.
-	tied := headT isNil.
-	legend := self nodeLabeled: self shortStyleLabel kind: #legend payload: nil annotation: self computeStyleLabel.
+	badge := self nodeLabeled: self honestyTitle kind: #legend payload: nil annotation: self towerSummary.
 	tokens := self nodeLabeled: 'token ids' kind: #tokens payload: nil annotation: nil.
-	nodes add: legend; add: tokens.
-	legend addForward: tokens.
+	nodes add: badge; add: tokens.
+	badge addForward: tokens.
+	prev := tokens.
 	embedT ifNotNil: [
 		embed := self nodeLabeled: (self moduleLeafOf: embedT) kind: #embedding payload: (self cohortFor: embedT) annotation: (self embeddingAnnotation: embedT).
-		nodes add: embed.
-		tokens addForward: embed ].
-	preRep ifNotNil: [
-		preNorm := self nodeLabeled: (self moduleLeafOf: preRep) kind: #norm payload: (self cohortFor: preRep) annotation: 'pre-attention norm'.
-		preNorm badge: 'x ' , self layerCountString , ' layers'.
-		nodes add: preNorm.
-		embed ifNotNil: [ embed addForward: preNorm ] ].
-	(embed isNil and: [ preNorm notNil ]) ifTrue: [ tokens addForward: preNorm ].
-	attnEntry := preNorm ifNil: [ embed ifNil: [ tokens ] ].
-	attnInNodes := attnInReps collect: [ :t | self nodeLabeled: (self moduleLeafOf: t) kind: #attention payload: (self cohortFor: t) annotation: (attentionFused ifTrue: [ 'fused qkv' ] ifFalse: [ nil ]) ].
-	attnInNodes do: [ :n | nodes add: n. attnEntry ifNotNil: [ attnEntry addForward: n ] ].
-	attnOutRep ifNotNil: [
-		attnOut := self nodeLabeled: (self moduleLeafOf: attnOutRep) kind: #attention payload: (self cohortFor: attnOutRep) annotation: self attentionHeadNote.
-		nodes add: attnOut.
-		attnInNodes do: [ :n | n addForward: attnOut ] ].
-	attnAdd := self nodeLabeled: '(+) residual' kind: #add payload: nil annotation: 'attention add'.
-	nodes add: attnAdd.
-	(attnOut ifNil: [ attnInNodes isEmpty ifTrue: [ attnEntry ] ifFalse: [ attnInNodes last ] ]) ifNotNil: [ :src | src addForward: attnAdd ].
-	attnEntry ifNotNil: [ attnEntry addResidual: attnAdd ].
-	postRep ifNotNil: [
-		postNorm := self nodeLabeled: (self moduleLeafOf: postRep) kind: #norm payload: (self cohortFor: postRep) annotation: 'pre-MLP norm'.
-		nodes add: postNorm.
-		attnAdd addForward: postNorm ].
-	mlpEntry := postNorm ifNil: [ attnAdd ].
-	mlpInNodes := mlpInReps collect: [ :t | self nodeLabeled: (self moduleLeafOf: t) kind: #mlp payload: (self cohortFor: t) annotation: (self mlpAnnotation: t) ].
-	mlpInNodes do: [ :n | nodes add: n. mlpEntry addForward: n ].
-	mlpOutRep ifNotNil: [
-		mlpOut := self nodeLabeled: (self moduleLeafOf: mlpOutRep) kind: #mlp payload: (self cohortFor: mlpOutRep) annotation: self mlpStyleNote.
-		nodes add: mlpOut.
-		mlpInNodes do: [ :n | n addForward: mlpOut ] ].
-	mlpAdd := self nodeLabeled: '(+) residual' kind: #add payload: nil annotation: 'MLP add'.
-	nodes add: mlpAdd.
-	(mlpOut ifNil: [ mlpInNodes isEmpty ifTrue: [ mlpEntry ] ifFalse: [ mlpInNodes last ] ]) ifNotNil: [ :src | src addForward: mlpAdd ].
-	attnAdd addResidual: mlpAdd.
+		nodes add: embed. prev addForward: embed. prev := embed ].
+	main ifNotNil: [
+		main archetypes do: [ :arch | | block |
+			block := self buildArchetypeBlockFor: arch into: nodes isMain: true.
+			(block first) do: [ :n | prev addForward: n ].
+			prev := block second ] ].
 	finalT ifNotNil: [
 		finalNorm := self nodeLabeled: 'final norm' kind: #finalNorm payload: (self cohortFor: finalT) annotation: (self moduleLeafOf: finalT).
-		nodes add: finalNorm.
-		mlpAdd addForward: finalNorm ].
-	head := self nodeLabeled: (tied ifTrue: [ 'lm_head (tied)' ] ifFalse: [ self moduleLeafOf: headT ]) kind: #head payload: (tied ifTrue: [ embedT ifNotNil: [ self cohortFor: embedT ] ] ifFalse: [ self cohortFor: headT ]) annotation: self headAnnotation.
-	nodes add: head.
-	(finalNorm ifNil: [ mlpAdd ]) addForward: head.
+		nodes add: finalNorm. prev addForward: finalNorm. prev := finalNorm ].
+	head := self nodeLabeled: (headT isNil ifTrue: [ 'lm_head (tied)' ] ifFalse: [ self moduleLeafOf: headT ])
+		kind: #head
+		payload: (headT isNil ifTrue: [ embedT ifNotNil: [ self cohortFor: embedT ] ] ifFalse: [ self cohortFor: headT ])
+		annotation: (self headAnnotationFor: headT).
+	nodes add: head. prev addForward: head.
 	logits := self nodeLabeled: 'logits' kind: #output payload: nil annotation: nil.
-	nodes add: logits.
-	head addForward: logits.
+	nodes add: logits. head addForward: logits.
+	self auxiliaryHeadGroups keysAndValuesDo: [ :pfx :grp | | headNode |
+		headNode := self nodeLabeled: pfx , ' (aux head)' kind: #auxHead payload: grp annotation: (self auxHeadModuleSummary: grp).
+		nodes add: headNode.
+		(finalNorm ifNil: [ prev ]) addForward: headNode ].
+	self auxiliaryTowers do: [ :tower | self buildAuxiliaryTowerStrand: tower into: nodes ].
 	^ nodes
 ]
 
@@ -201,11 +290,49 @@ GcSignalFlow >> buildInferredNodes [
 	^ nodes
 ]
 
+{ #category : 'building' }
+GcSignalFlow >> buildMlpNodesFor: arch into: nodes [
+	"MLP sublayer nodes for one archetype. Returns { inputNodes. outputNodes }."
+	| reps outputs inputs inputNodes outputNodes |
+	arch isMoE ifTrue: [ ^ self buildMoeNodesFor: arch into: nodes ].
+	reps := self uniqueLeafRepsFrom: arch mlpTensors.
+	outputs := reps select: [ :t | self isMlpOutputLeaf: (self moduleLeafOf: t) ].
+	inputs := reps reject: [ :t | outputs includes: t ].
+	inputNodes := inputs withIndexCollect: [ :t :i | self nodeLabeled: (self moduleLeafOf: t) kind: #mlp payload: (arch cohortForTensor: t) annotation: (i = 1 ifTrue: [ arch mlpKindLabel ] ifFalse: [ nil ]) ].
+	outputNodes := outputs collect: [ :t | self nodeLabeled: (self moduleLeafOf: t) kind: #mlp payload: (arch cohortForTensor: t) annotation: (self mlpAnnotation: t) ].
+	(inputNodes isEmpty and: [ outputNodes notEmpty ]) ifTrue: [ outputNodes first annotation: arch mlpKindLabel ].
+	nodes addAll: inputNodes; addAll: outputNodes.
+	^ { inputNodes. outputNodes }
+]
+
+{ #category : 'building' }
+GcSignalFlow >> buildMoeNodesFor: arch into: nodes [
+	"Compact MoE MLP nodes: router (gate), experts x N, optional shared expert -- all parallel into the residual add. Returns { inputNodes. {} }."
+	| out |
+	out := OrderedCollection new.
+	(arch mlpTensors detect: [ :t | (self moduleLeafOf: t) = 'gate' ] ifNone: [ nil ]) ifNotNil: [ :g |
+		out add: (self nodeLabeled: 'router (gate)' kind: #mlp payload: (arch cohortForTensor: g) annotation: 'top-k routing') ].
+	out add: (self nodeLabeled: 'experts' kind: #mlp payload: (arch cohortMatchingName: 'experts') annotation: arch mlpKindLabel).
+	arch hasSharedExpert ifTrue: [
+		out add: (self nodeLabeled: 'shared expert' kind: #mlp payload: (arch cohortMatchingName: 'shared_expert') annotation: 'always-on path') ].
+	nodes addAll: out.
+	^ { out. OrderedCollection new }
+]
+
 { #category : 'derivation' }
 GcSignalFlow >> buildNodes [
 	^ self hasTensors
 		ifTrue: [ self buildFromTensors ]
 		ifFalse: [ self buildInferredNodes ]
+]
+
+{ #category : 'structure' }
+GcSignalFlow >> claimSignatureOf: aTensor into: aSet [
+	"Claim every tensor sharing aTensor's slot signature (e.g. a norm's .weight AND .bias) so trunk pieces are never mistaken for an auxiliary head."
+	| sig |
+	aTensor ifNil: [ ^ self ].
+	sig := self signatureOf: aTensor.
+	tensorGroup do: [ :t | (self signatureOf: t) = sig ifTrue: [ aSet add: t ] ]
 ]
 
 { #category : 'derivation - parsing' }
@@ -214,6 +341,18 @@ GcSignalFlow >> cohortFor: aTensor [
 	| sig |
 	sig := self signatureOf: aTensor.
 	^ tensorGroup select: [ :t | (self signatureOf: t) = sig ]
+]
+
+{ #category : 'segmentation' }
+GcSignalFlow >> computeMainArchetypeFlags [
+	"Set the top-level fused/gated flags from the main tower's representative archetype (backwards-compatible summary for the homogeneous case)."
+	| arch |
+	attentionFused := false.
+	mlpGated := false.
+	arch := self mainTower ifNil: [ ^ self ].
+	arch := arch firstArchetype ifNil: [ ^ self ].
+	attentionFused := arch attentionKind = #fused.
+	mlpGated := (arch mlpKind = #gated) or: [ arch mlpKind = #moe ]
 ]
 
 { #category : 'derivation - facts' }
@@ -265,27 +404,39 @@ GcSignalFlow >> embeddingAnnotation: aTensor [
 		ifFalse: [ 'vocab x hidden' ]
 ]
 
-{ #category : 'derivation - parsing' }
+{ #category : 'structure' }
 GcSignalFlow >> embeddingTensor [
-	^ tensorGroup detect: [ :t | | m |
-		t layerIndex isNil and: [
-			m := self moduleLeafOf: t.
-			(m includesSubstring: 'embed') or: [ m = 'wte' ] ] ]
+	"The language token embedding tensor (vocab x hidden), or nil."
+	^ tensorGroup
+		detect: [ :t | t layerIndex isNil and: [ self isTokenEmbeddingName: t name ] ]
 		ifNone: [ nil ]
 ]
 
-{ #category : 'derivation - parsing' }
+{ #category : 'segmentation' }
+GcSignalFlow >> ensureSegmented [
+	"Partition the tensor names into towers (once). Reads only loaded state (I5)."
+	towers ifNotNil: [ ^ self ].
+	self hasTensors ifFalse: [ towers := #(). ^ self ].
+	self segmentTowers.
+	self computeMainArchetypeFlags
+]
+
+{ #category : 'structure' }
 GcSignalFlow >> finalNormTensor [
-	^ tensorGroup detect: [ :t | | m |
-		t layerIndex isNil and: [
-			m := self moduleLeafOf: t.
-			((m includesSubstring: 'norm') or: [ m includesSubstring: 'ln' ]) and: [ (m includesSubstring: 'embed') not ] ] ]
-		ifNone: [ nil ]
+	"The main tower's final norm, preferring one sharing the main tower prefix."
+	| candidates mainPrefix hit |
+	candidates := tensorGroup select: [ :t | t layerIndex isNil and: [ self isFinalNormName: t name ] ].
+	candidates isEmpty ifTrue: [ ^ nil ].
+	mainPrefix := self mainTower ifNotNil: [ :m | m prefix ].
+	(mainPrefix notNil and: [ mainPrefix notEmpty ]) ifTrue: [
+		hit := candidates detect: [ :t | t name includesSubstring: mainPrefix , '.norm' ] ifNone: [ nil ].
+		hit ifNotNil: [ ^ hit ] ].
+	^ candidates anyOne
 ]
 
 { #category : 'gt views' }
 GcSignalFlow >> gtSignalFlowFor: aView [
-	"What is the shape of the computation this checkpoint performs? A control-system block diagram: token ids -> embedding -> one detailed transformer block (x N layers) -> final norm -> lm_head -> logits, with the residual/skip bypass edges (dashed orange) drawn around the attention and MLP sublayers."
+	"What is the shape of the computation this checkpoint performs? A control-system block diagram: token ids -> embedding -> the main tower's archetype blocks (one representative block per DISTINCT layer kind, badged with its layer count/range) -> final norm -> lm_head -> logits, with the residual/skip bypass edges (dashed orange) around each block's attention and MLP sublayers. Auxiliary heads (e.g. MTP) and auxiliary towers (e.g. a vision tower) are drawn as their own separate strands -- never merged into the main block. The legend node carries the honesty badge (archetype/tower counts; faithful vs representative)."
 	<gtView>
 	^ aView mondrian
 		title: 'Signal flow';
@@ -321,6 +472,17 @@ GcSignalFlow >> headAnnotation [
 	^ 'hidden x vocab'
 ]
 
+{ #category : 'structure' }
+GcSignalFlow >> headAnnotationFor: aTensor [
+	"Head dimensions read from the REAL lm_head tensor shape ([vocab, hidden]); falls back to config-derived dims when tied/absent."
+	| d |
+	aTensor isNil ifTrue: [ ^ 'tied to embedding · ' , self headAnnotation ].
+	d := aTensor dimensions.
+	^ d size >= 2
+		ifTrue: [ d last printString , ' x ' , d first printString , ' (hidden x vocab, from lm_head)' ]
+		ifFalse: [ self headAnnotation ]
+]
+
 { #category : 'derivation - facts' }
 GcSignalFlow >> hiddenSizeValue [
 	architecture ifNotNil: [ :a | a hiddenSize ifNotNil: [ :h | ^ h ] ].
@@ -330,14 +492,55 @@ GcSignalFlow >> hiddenSizeValue [
 		ifNotNil: [ :e | | d | d := e dimensions. d isEmpty ifTrue: [ nil ] ifFalse: [ d last ] ]
 ]
 
+{ #category : 'honesty' }
+GcSignalFlow >> honestyTitle [
+	"A short structural style name for the badge, augmented with +MoE / +SSM / +VLM when those are present."
+	| base extras main |
+	self isInferred ifTrue: [ ^ 'inferred (config)' ].
+	base := self modelStyleName.
+	extras := OrderedCollection new.
+	main := self mainTower.
+	(main notNil and: [ main archetypes anySatisfy: [ :a | a isMoE ] ]) ifTrue: [ extras add: 'MoE' ].
+	(main notNil and: [ main archetypes anySatisfy: [ :a | a hasLinearAttention ] ]) ifTrue: [ extras add: 'SSM' ].
+	(self auxiliaryTowers anySatisfy: [ :t | t name = 'vision' ]) ifTrue: [ extras add: 'VLM' ].
+	^ extras isEmpty ifTrue: [ base ] ifFalse: [ base , ' +' , ('+' join: extras) ]
+]
+
 { #category : 'derivation - parsing' }
 GcSignalFlow >> isAttentionOutputLeaf: aLeaf [
 	^ #('o_proj' 'c_proj' 'out_proj' 'dense' 'wo' 'proj') includes: aLeaf
 ]
 
+{ #category : 'structure' }
+GcSignalFlow >> isFinalNormName: aName [
+	"A model-level final norm (model.norm / ln_f / final_layer_norm), excluding vision/MTP/merger norms and any embedding."
+	| lower |
+	lower := aName asLowercase.
+	((lower includesSubstring: 'mtp') or: [ (lower includesSubstring: 'visual')
+		or: [ (lower includesSubstring: 'vision') or: [ (lower includesSubstring: 'patch')
+		or: [ (lower includesSubstring: 'merger') or: [ lower includesSubstring: 'embed' ] ] ] ] ])
+		ifTrue: [ ^ false ].
+	^ (lower includesSubstring: 'norm') or: [ lower includesSubstring: 'ln_f' ]
+]
+
+{ #category : 'honesty' }
+GcSignalFlow >> isHomogeneous [
+	"True when the diagram is faithful rather than representative: a single layered tower, one archetype, no auxiliary heads."
+	self isInferred ifTrue: [ ^ true ].
+	self hasTensors ifFalse: [ ^ true ].
+	^ (self towers size = 1)
+		and: [ self archetypeCount = 1
+		and: [ self auxiliaryHeadGroups isEmpty ] ]
+]
+
 { #category : 'testing' }
 GcSignalFlow >> isInferred [
 	^ inferred == true
+]
+
+{ #category : 'segmentation' }
+GcSignalFlow >> isLayerWord: aString [
+	^ #('layers' 'h' 'blocks' 'block') includes: aString
 ]
 
 { #category : 'derivation - parsing' }
@@ -353,6 +556,22 @@ GcSignalFlow >> isNumericString: aString [
 { #category : 'testing' }
 GcSignalFlow >> isTiedEmbeddings [
 	^ self hasTensors and: [ self lmHeadTensor isNil ]
+]
+
+{ #category : 'structure' }
+GcSignalFlow >> isTokenEmbeddingName: aName [
+	"True only for the LANGUAGE token embedding -- never a vision patch/pos embedding nor an MTP head's norm (which merely contains the substring 'embed')."
+	| lower |
+	lower := aName asLowercase.
+	(lower includesSubstring: 'norm') ifTrue: [ ^ false ].
+	((lower includesSubstring: 'patch') or: [ (lower includesSubstring: 'pos_embed')
+		or: [ (lower includesSubstring: 'visual') or: [ (lower includesSubstring: 'vision')
+		or: [ lower includesSubstring: 'mtp' ] ] ] ]) ifTrue: [ ^ false ].
+	^ (lower includesSubstring: 'embed_tokens')
+		or: [ (lower includesSubstring: 'wte')
+		or: [ (lower includesSubstring: 'embed_in')
+		or: [ (lower includesSubstring: 'word_embeddings')
+		or: [ lower includesSubstring: 'tok_embeddings' ] ] ] ]
 ]
 
 { #category : 'derivation - parsing' }
@@ -375,13 +594,16 @@ GcSignalFlow >> layerPositionIn: parts [
 	^ parts findFirst: [ :p | self isNumericString: p ]
 ]
 
-{ #category : 'derivation - parsing' }
+{ #category : 'building' }
 GcSignalFlow >> layerZeroTensors [
-	"The tensors of the representative (lowest-index) transformer layer -- the block we draw in detail."
-	| rep |
-	rep := self representativeLayerIndex.
-	rep isNil ifTrue: [ ^ tensorGroup select: [ :t | false ] ].
-	^ tensorGroup select: [ :t | t layerIndex = rep ]
+	"The representative block tensors: the main tower's first archetype's representative layer. For a homogeneous single-tower model this is layer 0 (unchanged); for a multi-tower model it EXCLUDES other towers (fixing the cross-tower union bug)."
+	| main |
+	self hasTensors ifFalse: [ ^ GcTensorGroup withAll: #() ].
+	main := self mainTower.
+	main ifNil: [ ^ GcTensorGroup withAll: #() ].
+	^ main firstArchetype
+		ifNil: [ GcTensorGroup withAll: #() ]
+		ifNotNil: [ :a | a representativeTensors ]
 ]
 
 { #category : 'derivation - parsing' }
@@ -396,6 +618,12 @@ GcSignalFlow >> lmHeadTensor [
 GcSignalFlow >> looksLikeNormLeaf: aLeaf [
 	aLeaf isNil ifTrue: [ ^ false ].
 	^ (aLeaf includesSubstring: 'norm') or: [ aLeaf includesSubstring: 'ln' ]
+]
+
+{ #category : 'accessing' }
+GcSignalFlow >> mainTower [
+	"The tower carrying the token stream to the head (most layers, preferring a language/main prefix)."
+	^ self towers detect: [ :t | t isMain ] ifNone: [ self towers isEmpty ifTrue: [ nil ] ifFalse: [ self towers first ] ]
 ]
 
 { #category : 'derivation - facts' }
@@ -512,6 +740,24 @@ GcSignalFlow >> residualEdgeCount [
 	^ self nodes inject: 0 into: [ :sum :n | sum + n residualTargets size ]
 ]
 
+{ #category : 'segmentation' }
+GcSignalFlow >> segmentTowers [
+	"Group every per-layer tensor by its tower key; the main tower is the largest one whose default role is #main (else simply the largest)."
+	| byKey towerList main |
+	byKey := Dictionary new.
+	tensorGroup do: [ :t | | k |
+		k := self towerKeyOf: t.
+		k ifNotNil: [ (byKey at: k ifAbsentPut: [ OrderedCollection new ]) add: t ] ].
+	towerList := byKey associations collect: [ :assoc |
+		GcSignalTower flow: self key: assoc key tensors: (GcTensorGroup withAll: assoc value) ].
+	towerList := (towerList asSortedCollection: [ :a :b | a layerCount > b layerCount ]) asArray.
+	main := towerList
+		detect: [ :t | t role = #main ]
+		ifNone: [ towerList isEmpty ifTrue: [ nil ] ifFalse: [ towerList first ] ].
+	towerList do: [ :t | t role: (t == main ifTrue: [ #main ] ifFalse: [ #auxiliary ]) ].
+	towers := towerList
+]
+
 { #category : 'initialization' }
 GcSignalFlow >> setTensorGroup: aTensorGroup architecture: anArchitecture inferred: aBoolean [
 	tensorGroup := aTensorGroup.
@@ -543,6 +789,57 @@ GcSignalFlow >> styleLabel [
 { #category : 'accessing' }
 GcSignalFlow >> tensorGroup [
 	^ tensorGroup
+]
+
+{ #category : 'segmentation' }
+GcSignalFlow >> towerKeyOf: aTensor [
+	"The tower key of a per-layer tensor: the dotted path up to AND INCLUDING the layer word (layers / h / blocks / block), or nil if this is not a per-layer tensor of a recognised layer stack. Tower-prefix agnostic: works for model.layers, model.language_model.layers, transformer.h, model.visual.blocks, gpt_neox.layers, ..."
+	| parts pos word |
+	parts := self partsOf: aTensor.
+	pos := self layerPositionIn: parts.
+	pos < 2 ifTrue: [ ^ nil ].
+	word := parts at: pos - 1.
+	(self isLayerWord: word) ifFalse: [ ^ nil ].
+	^ '.' join: (parts first: pos - 1)
+]
+
+{ #category : 'structure' }
+GcSignalFlow >> towerNoLayerCohortOf: aTower matchingAny: substrings [
+	"No-layer tensors under aTower's prefix whose name contains any of substrings (e.g. a vision patch/pos embed) -- a GcTensorGroup for drill-in."
+	^ tensorGroup select: [ :t |
+		t layerIndex isNil
+			and: [ (aTower prefix notEmpty and: [ t name beginsWith: aTower prefix , '.' ])
+			and: [ substrings anySatisfy: [ :s | t name asLowercase includesSubstring: s ] ] ] ]
+]
+
+{ #category : 'structure' }
+GcSignalFlow >> towerNoLayerOthersOf: aTower excludingAny: substrings [
+	"No-layer tensors under aTower's prefix that are NOT matched by substrings (e.g. a vision merger, or an MTP head's fc/norm/pre_fc_norm glue) -- a GcTensorGroup for drill-in."
+	^ tensorGroup select: [ :t |
+		t layerIndex isNil
+			and: [ (aTower prefix notEmpty and: [ t name beginsWith: aTower prefix , '.' ])
+			and: [ (substrings anySatisfy: [ :s | t name asLowercase includesSubstring: s ]) not ] ] ]
+]
+
+{ #category : 'honesty' }
+GcSignalFlow >> towerSummary [
+	"A one-line honesty caption: main tower archetype/layer counts, any auxiliary towers and heads, and whether the diagram is faithful or representative."
+	| parts main |
+	self isInferred ifTrue: [ ^ 'inferred from config (canonical llama-style)' ].
+	parts := OrderedCollection new.
+	main := self mainTower.
+	main ifNotNil: [ parts add: main name , ' tower: ' , main summaryString ].
+	self auxiliaryTowers do: [ :t | parts add: '+' , t name , '(' , t layerCount printString , ')' ].
+	self auxiliaryHeadGroups keys asSortedCollection do: [ :k | parts add: '+' , k ].
+	parts add: (self isHomogeneous ifTrue: [ 'faithful' ] ifFalse: [ 'representative blocks' ]).
+	^ ' · ' join: parts
+]
+
+{ #category : 'accessing' }
+GcSignalFlow >> towers [
+	"The layered towers of this checkpoint (main + any auxiliary vision/audio towers)."
+	self ensureSegmented.
+	^ towers
 ]
 
 { #category : 'derivation - parsing' }

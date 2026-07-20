@@ -72,6 +72,17 @@ GcShardedSafetensorsFile >> gtShardsFor: aView [
 ]
 
 { #category : 'gt views' }
+GcShardedSafetensorsFile >> gtSignalFlowFor: aView [
+	"The signal-flow / block diagram derived from this sharded model's UNION of tensor names (segmented into towers + archetypes, so a multi-tower / heterogeneous checkpoint is told honestly)."
+	<gtView>
+	^ aView forward
+		title: 'Signal flow';
+		priority: 5;
+		object: [ GcSignalFlow fromTensorGroup: self tensorGroup ];
+		view: #gtSignalFlowFor:
+]
+
+{ #category : 'gt views' }
 GcShardedSafetensorsFile >> gtSkylineFor: aView [
 	"The model skyline over the whole sharded union (forwarded to the tensor group)."
 	<gtView>

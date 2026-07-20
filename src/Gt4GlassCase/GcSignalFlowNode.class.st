@@ -99,7 +99,7 @@ GcSignalFlowNode >> initialize [
 
 { #category : 'testing' }
 GcSignalFlowNode >> isModule [
-	^ #(attention mlp norm embedding finalNorm head) includes: kind
+	^ #(attention mlp norm embedding finalNorm head tower auxHead) includes: kind
 ]
 
 { #category : 'accessing' }
@@ -132,11 +132,12 @@ GcSignalFlowNode >> payload: anObject [
 	payload := anObject
 ]
 
-{ #category : 'accessing' }
+{ #category : 'views' }
 GcSignalFlowNode >> payloadViewSelector [
 	payload isNil ifTrue: [ ^ nil ].
 	(payload isKindOf: GcTensorGroup) ifTrue: [ ^ #gtShapeTableFor: ].
 	(payload isKindOf: GcArchitecture) ifTrue: [ ^ #gtOverviewFor: ].
+	(payload isKindOf: GcSignalTower) ifTrue: [ ^ #gtArchetypesFor: ].
 	^ nil
 ]
 

@@ -928,7 +928,7 @@ GcExamples >> signalFlowFromArchitectureIsInferredCanonical [
 
 { #category : 'examples - signal flow' }
 GcExamples >> signalFlowFromGpt2FileShowsFusedAttention [
-	"A GPT-2-style synthetic checkpoint (fused attn.c_attn, 2-proj MLP, tied output) -> signal-flow diagram: assert the FUSED attention node (c_attn) is present, that there is no split q_proj node, that the MLP is 2-proj, and that tied embeddings are detected."
+	"A GPT-2-style synthetic checkpoint (fused attn.c_attn, 2-proj MLP, tied output) -> signal-flow diagram: assert the FUSED attention node (c_attn) is present, that there is no split q_proj node, that the MLP is 2-proj, and that tied embeddings are detected. Homogeneous: one archetype, faithful diagram."
 	<gtExample>
 	| file flow labels m |
 	file := self syntheticGpt2FileNamed: 'synthetic-signalflow-gpt2-4L' layers: 4.
@@ -937,6 +937,9 @@ GcExamples >> signalFlowFromGpt2FileShowsFusedAttention [
 	self assert: flow attentionFused.
 	self assert: flow mlpGated not.
 	self assert: flow modelStyleName equals: 'gpt2-style'.
+	self assert: flow archetypeCount equals: 1.
+	self assert: flow isHomogeneous.
+	self assert: flow mainTower firstArchetype attentionKind equals: #fused.
 	self assert: (labels includes: 'c_attn').
 	self assert: (labels includes: 'q_proj') not.
 	self assert: (labels includes: 'c_fc').
@@ -950,7 +953,7 @@ GcExamples >> signalFlowFromGpt2FileShowsFusedAttention [
 
 { #category : 'examples - signal flow' }
 GcExamples >> signalFlowFromLlamaFileRendersBlocks [
-	"A llama-style synthetic checkpoint -> signal-flow diagram: assert the derived block set (embedding, split attention q/k/v/o, gated MLP gate/up/down, both norms, head) and the two residual bypass edges, and that the Mondrian renders non-empty."
+	"A llama-style synthetic checkpoint -> signal-flow diagram: assert the derived block set (embedding, split attention q/k/v/o, gated MLP gate/up/down, both norms, head) and the two residual bypass edges, and that the Mondrian renders non-empty. It is homogeneous: one archetype spanning all layers, so the diagram is faithful."
 	<gtExample>
 	| file flow labels m |
 	file := self syntheticModelFileNamed: 'synthetic-signalflow-6L' layers: 6 experts: 0.
@@ -959,6 +962,10 @@ GcExamples >> signalFlowFromLlamaFileRendersBlocks [
 	self assert: flow attentionFused not.
 	self assert: flow mlpGated.
 	self assert: flow modelStyleName equals: 'llama-style'.
+	self assert: flow archetypeCount equals: 1.
+	self assert: flow isHomogeneous.
+	self assert: flow mainTower firstArchetype attentionKind equals: #split.
+	self assert: flow mainTower firstArchetype mlpKind equals: #gated.
 	#('embed_tokens' 'input_layernorm' 'q_proj' 'k_proj' 'v_proj' 'o_proj' 'post_attention_layernorm' 'gate_proj' 'up_proj' 'down_proj' 'lm_head')
 		do: [ :each | self assert: (labels includes: each) ].
 	self assert: (flow nodes anySatisfy: [ :n | n kind = #finalNorm ]).
@@ -966,6 +973,68 @@ GcExamples >> signalFlowFromLlamaFileRendersBlocks [
 	m := GtMondrian new.
 	flow paintSignalFlowOn: m.
 	self assert: m root children notEmpty.
+	^ flow
+]
+
+{ #category : 'examples - signal flow' }
+GcExamples >> signalFlowHeterogeneousSegmentsTowersAndArchetypes [
+	"A T-Search-like heterogeneous VLM (linear-attention/SSM + full-attention + hybrid MoE language layers, a separate vision tower, an MTP head) is told HONESTLY: the language tower is segmented into 3 distinct archetype blocks (never conflating conv1d with q_proj), the vision tower is a separate strand, and the MTP head is its own node -- not mistaken for the token embedding."
+	<gtExample>
+	| file flow main lin sm hyb vision labels embed head m |
+	file := self syntheticVlmHeterogeneousFile.
+	flow := GcSignalFlow fromTensorGroup: file tensorGroup.
+	self assert: flow towers size equals: 2.
+	main := flow mainTower.
+	self assert: main name equals: 'language'.
+	self assert: flow archetypeCount equals: 3.
+	self assert: flow isHomogeneous not.
+	lin := main archetypes detect: [ :a | a attentionKind = #linear ].
+	sm := main archetypes detect: [ :a | a attentionKind = #split ].
+	hyb := main archetypes detect: [ :a | a attentionKind = #hybrid ].
+	self assert: lin layerCount equals: 7.
+	self assert: sm layerCount equals: 4.
+	self assert: hyb layerCount equals: 1.
+	self assert: (lin attentionKindLabel includesSubstring: 'SSM').
+	self assert: (lin attentionTensors anySatisfy: [ :t | (lin moduleLeafOf: t) = 'q_proj' ]) not.
+	self assert: (sm attentionTensors anySatisfy: [ :t | (sm moduleLeafOf: t) = 'q_proj' ]).
+	self assert: (main archetypes allSatisfy: [ :a | a isMoE ]).
+	self assert: (lin mlpKindLabel includesSubstring: '8 experts').
+	self assert: (lin mlpKindLabel includesSubstring: 'shared').
+	vision := flow auxiliaryTowers detect: [ :t | t name = 'vision' ].
+	self assert: vision layerCount equals: 6.
+	self assert: vision archetypeCount equals: 1.
+	self assert: vision firstArchetype attentionKind equals: #fused.
+	self assert: vision firstArchetype mlpKind equals: #twoProj.
+	self assert: (flow auxiliaryHeadGroups keys includes: 'mtp').
+	labels := flow nodeLabels.
+	self assert: (labels includes: 'mtp (aux head)').
+	self assert: (labels includes: 'vision tower').
+	self assert: (labels includes: 'conv1d').
+	self assert: (labels includes: 'q_proj').
+	self assert: (labels includes: 'experts').
+	embed := flow nodes detect: [ :n | n kind = #embedding and: [ n label = 'embed_tokens' ] ].
+	self assert: (embed annotation includesSubstring: '1000 x 64').
+	head := flow nodes detect: [ :n | n kind = #head and: [ n label = 'lm_head' ] ].
+	self assert: (head annotation includesSubstring: '64 x 1000').
+	self assert: (head annotation includesSubstring: 'lm_head').
+	m := GtMondrian new.
+	flow paintSignalFlowOn: m.
+	self assert: m root children notEmpty.
+	^ flow
+]
+
+{ #category : 'examples - signal flow' }
+GcExamples >> signalFlowReadsRealHeadAndEmbeddingDims [
+	"Dimension annotations are read from the REAL embedding and lm_head tensor shapes, never a wrong constant: a fixture with vocab 32000 x hidden 64 shows exactly those in both the embedding and the head node."
+	<gtExample>
+	| file flow embed head |
+	file := self syntheticModelFileNamed: 'synthetic-signalflow-dims' layers: 2 experts: 0.
+	flow := GcSignalFlow fromTensorGroup: file tensorGroup.
+	embed := flow nodes detect: [ :n | n kind = #embedding ].
+	self assert: (embed annotation includesSubstring: '32000 x 64').
+	head := flow nodes detect: [ :n | n kind = #head ].
+	self assert: (head annotation includesSubstring: '64 x 32000').
+	self assert: (head annotation includesSubstring: 'lm_head').
 	^ flow
 ]
 
@@ -1226,6 +1295,77 @@ GcExamples >> syntheticShardFileNamed: aName floatTensors: anOrderedAssocs dataO
 	file byteDataOffset: anOffset.
 	file bytesProvider: (GcInMemoryBytesProvider bytes: buf dataOffset: anOffset).
 	^ file
+]
+
+{ #category : 'support - signal flow' }
+GcExamples >> syntheticVlmHeterogeneousFile [
+	| file |
+	file := GcSafetensorsFile new.
+	file path: 'synthetic-vlm-heterogeneous'.
+	file parseHeaderDictionary: self syntheticVlmHeterogeneousHeader.
+	^ file
+]
+
+{ #category : 'support - signal flow' }
+GcExamples >> syntheticVlmHeterogeneousHeader [
+	"A safetensors header modelled on t-tech/T-Search: a heterogeneous language tower (linear-attention/SSM layers, full-attention layers, one hybrid layer, all MoE), a separate vision tower, and an MTP auxiliary head -- for hermetic signal-flow segmentation tests (no network)."
+	| header offset add hidden vocab nExp inter moeMlp linearAttn softmaxAttn norms |
+	header := Dictionary new.
+	offset := 0.
+	hidden := 64. vocab := 1000. nExp := 8. inter := 128.
+	add := [ :tname :dims | | elems bytes |
+		elems := dims inject: 1 into: [ :p :d | p * d ].
+		bytes := elems * 2.
+		header at: tname put: (Dictionary new
+			at: 'dtype' put: 'BF16';
+			at: 'shape' put: dims asArray;
+			at: 'data_offsets' put: { offset. offset + bytes }; yourself).
+		offset := offset + bytes ].
+	moeMlp := [ :pfx |
+		add value: pfx , 'mlp.gate.weight' value: { nExp. hidden }.
+		add value: pfx , 'mlp.experts.gate_up_proj.weight' value: { nExp. hidden. inter * 2 }.
+		add value: pfx , 'mlp.experts.down_proj.weight' value: { nExp. inter. hidden }.
+		add value: pfx , 'mlp.shared_expert.gate_proj.weight' value: { inter. hidden }.
+		add value: pfx , 'mlp.shared_expert.up_proj.weight' value: { inter. hidden }.
+		add value: pfx , 'mlp.shared_expert.down_proj.weight' value: { hidden. inter }.
+		add value: pfx , 'mlp.shared_expert_gate.weight' value: { hidden } ].
+	linearAttn := [ :pfx |
+		#('conv1d' 'in_proj_a' 'in_proj_b' 'in_proj_z' 'in_proj_qkv' 'out_proj' 'norm') do: [ :m |
+			add value: pfx , 'linear_attn.' , m , '.weight' value: { hidden. hidden } ].
+		add value: pfx , 'linear_attn.A_log' value: { hidden }.
+		add value: pfx , 'linear_attn.dt_bias' value: { hidden } ].
+	softmaxAttn := [ :pfx |
+		#('q_proj' 'k_proj' 'v_proj' 'o_proj' 'q_norm' 'k_norm') do: [ :m |
+			add value: pfx , 'self_attn.' , m , '.weight' value: { hidden. hidden } ] ].
+	norms := [ :pfx |
+		add value: pfx , 'input_layernorm.weight' value: { hidden }.
+		add value: pfx , 'post_attention_layernorm.weight' value: { hidden } ].
+	add value: 'model.language_model.embed_tokens.weight' value: { vocab. hidden }.
+	0 to: 11 do: [ :i | | pfx |
+		pfx := 'model.language_model.layers.' , i printString , '.'.
+		norms value: pfx.
+		i <= 6 ifTrue: [ linearAttn value: pfx ].
+		(i >= 7 and: [ i <= 10 ]) ifTrue: [ softmaxAttn value: pfx ].
+		i = 11 ifTrue: [ linearAttn value: pfx. softmaxAttn value: pfx ].
+		moeMlp value: pfx ].
+	add value: 'model.language_model.norm.weight' value: { hidden }.
+	add value: 'model.visual.patch_embed.proj.weight' value: { hidden. hidden }.
+	add value: 'model.visual.pos_embed.weight' value: { 100. hidden }.
+	0 to: 5 do: [ :i | | pfx |
+		pfx := 'model.visual.blocks.' , i printString , '.'.
+		add value: pfx , 'attn.qkv.weight' value: { hidden * 3. hidden }.
+		add value: pfx , 'attn.proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'mlp.linear_fc1.weight' value: { inter. hidden }.
+		add value: pfx , 'mlp.linear_fc2.weight' value: { hidden. inter }.
+		add value: pfx , 'norm1.weight' value: { hidden }.
+		add value: pfx , 'norm2.weight' value: { hidden } ].
+	add value: 'model.visual.merger.fc.weight' value: { hidden. hidden }.
+	add value: 'mtp.fc.weight' value: { hidden. hidden }.
+	add value: 'mtp.norm.weight' value: { hidden }.
+	add value: 'mtp.pre_fc_norm_embedding.weight' value: { hidden }.
+	add value: 'mtp.pre_fc_norm_hidden.weight' value: { hidden }.
+	add value: 'lm_head.weight' value: { vocab. hidden }.
+	^ header
 ]
 
 { #category : 'examples-groups' }
