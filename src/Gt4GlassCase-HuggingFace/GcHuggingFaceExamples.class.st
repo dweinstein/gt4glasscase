@@ -176,6 +176,29 @@ GcHuggingFaceExamples >> liveModelSourceComparison [
 	^ group
 ]
 
+{ #category : 'examples - live - moe router' }
+GcHuggingFaceExamples >> liveOlmoeRouterRegionMap [
+	"SPIKE: load one MoE layer's gating router from a real ungated model (OLMoE-1B-7B, 64 experts) over bounded HTTP Range, build the region map on the router's principal singular slice, and confirm the tessellation + simulated-int4 shift are non-trivial. Fetches config + safetensors headers + ONE ~256KB router tensor; never whole shards."
+	<gtExample>
+	<noTest>
+	| source config routerRef router slice map distinct flip |
+	source := GcHuggingFaceModelSource forRepository: 'allenai/OLMoE-1B-7B-0924'.
+	config := source config.
+	self assert: source routerTensors notEmpty.
+	routerRef := source firstRouterTensor.
+	router := GcMoeRouter fromTensorRef: routerRef.
+	self assert: router expertCount equals: config numExperts.
+	slice := router principalSlice.
+	map := GcRouterRegionMap router: router slice: slice.
+	distinct := map distinctWinningExperts size.
+	self assert: distinct >= 2.
+	flip := map quantizationFlipFractionToBits: 4.
+	self assert: flip >= 0.
+	self assert: (map gtExpertRegionsFor: GtPhlowView empty) notNil.
+	self assert: (map expertRegionsElement isKindOf: BlElement).
+	^ map
+]
+
 { #category : 'examples - live' }
 GcHuggingFaceExamples >> liveQwen25SignalFlowIsHomogeneous [
 	"Qwen/Qwen2.5-7B-Instruct: a homogeneous single-tower transformer -> exactly one archetype (a faithful, not merely representative, diagram) with real dims. Headers only (I5)."

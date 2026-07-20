@@ -316,6 +316,12 @@ GcTensorGroup >> regularityScores [
 	^ scores
 ]
 
+{ #category : 'api - groups' }
+GcTensorGroup >> routerTensors [
+	"The MoE gating-router weight tensors (one per MoE layer) as a group. Pure -- no weight bytes decoded."
+	^ self select: [ :t | t isRouterTensor ]
+]
+
 { #category : 'accessing' }
 GcTensorGroup >> sampledStatsTensors [
 	"This group's tensors that already carry cached Tier-1 stats (never fetches)."

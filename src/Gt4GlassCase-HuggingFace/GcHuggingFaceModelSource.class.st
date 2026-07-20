@@ -33,6 +33,15 @@ GcHuggingFaceModelSource >> architectureFor: aRepoId [
 	^ (self configFor: aRepoId) architecture
 ]
 
+{ #category : 'api - routers' }
+GcHuggingFaceModelSource >> buildRouterGeometry [
+	"Decode the lowest-layer MoE router with ONE ranged read into a GcMoeRouter. Explicit (network) -- call from an action or example, never a view (I5)."
+	| ref |
+	ref := self firstRouterTensor.
+	ref ifNil: [ ^ self error: 'No MoE gating router in ' , repositoryId printString ].
+	^ GcMoeRouter fromTensorRef: ref
+]
+
 { #category : 'safetensors' }
 GcHuggingFaceModelSource >> buildSafetensorsFileFor: aRepoId file: aFileName header: aHeader [
 	"Translate a generic safetensors header into a GcSafetensorsFile of GcTensorRefs, and wire a bytes provider so numeric views can sample tensor values on demand (I5: ranged reads only). The core class parses a plain Dictionary, so it stays decoupled from the HF client."
@@ -92,6 +101,15 @@ GcHuggingFaceModelSource >> fileInfo: aFileName [
 	^ self safetensorsFile: aFileName
 ]
 
+{ #category : 'api - routers' }
+GcHuggingFaceModelSource >> firstRouterTensor [
+	"The lowest-layer MoE router tensor, or nil if this model has none."
+	| routers |
+	routers := self routerTensors.
+	routers isEmpty ifTrue: [ ^ nil ].
+	^ routers detectMin: [ :t | t layerIndex ifNil: [ 999999 ] ]
+]
+
 { #category : 'views' }
 GcHuggingFaceModelSource >> gtAnomalousTokensFor: aView [
 	<gtView>
@@ -112,6 +130,24 @@ GcHuggingFaceModelSource >> gtArchitectureFor: aView [
 		priority: 3;
 		object: [ self architecture ];
 		view: #gtOverviewFor:
+]
+
+{ #category : 'gt - actions' }
+GcHuggingFaceModelSource >> gtBuildRouterGeometryActionFor: anAction [
+	<gtAction>
+	^ anAction button
+		label: 'Router geometry';
+		tooltip: 'Decode the lowest-layer MoE router (one bounded ranged read) and open its region-map tessellation';
+		priority: 55;
+		icon: BrGlamorousVectorIcons inspect;
+		action: [ :aButton |
+			[ | routers result |
+			routers := self routerTensors.
+			result := routers isEmpty
+				ifTrue: [ 'No MoE gating router found in this model.' ]
+				ifFalse: [ self buildRouterGeometry ].
+			aButton enqueueTask: (BlTaskAction new action: [ aButton phlow spawnObject: result ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
 { #category : 'gt views' }
@@ -184,6 +220,20 @@ GcHuggingFaceModelSource >> gtOddTokensActionFor: anAction [
 			aButton enqueueTask: (BlTaskAction new action: [
 				aButton phlow spawnObject: group ]) ]
 				asAsyncFuture awaitWithUserBackgroundPriority ]
+]
+
+{ #category : 'gt - views' }
+GcHuggingFaceModelSource >> gtRoutersFor: aView [
+	"Which layers carry a MoE gating router? One row per router tensor (from the safetensors header; no weight decode). Click a row to inspect the tensor; use the 'Router geometry' action to decode one and see its tessellation."
+	<gtView>
+	^ aView columnedList
+		title: 'Routers';
+		priority: 6;
+		items: [ self routerTensors asArray sorted: [ :a :b | (a layerIndex ifNil: [ -1 ]) < (b layerIndex ifNil: [ -1 ]) ] ];
+		column: 'Layer' text: [ :t | t layerIndex ];
+		column: 'Tensor' text: [ :t | t name ];
+		column: 'Shape (E x d)' text: [ :t | t shape displayString ];
+		send: [ :t | t ]
 ]
 
 { #category : 'gt actions' }
@@ -422,6 +472,12 @@ GcHuggingFaceModelSource >> resolveShardedSafetensorsFile [
 		metadata: (index at: 'metadata' ifAbsent: [ nil ])
 		path: repositoryId , '/model.safetensors.index.json'
 		shardBuilder: [ :fileName | self safetensorsFileFor: repositoryId file: fileName ]
+]
+
+{ #category : 'api - routers' }
+GcHuggingFaceModelSource >> routerTensors [
+	"The MoE gating-router weight tensors of this model, from the safetensors header (no weight bytes decoded)."
+	^ self tensorGroup routerTensors
 ]
 
 { #category : 'safetensors' }

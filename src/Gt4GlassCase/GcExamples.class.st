@@ -136,6 +136,15 @@ GcExamples >> artifactSliceByPrecision [
 	^ slice
 ]
 
+{ #category : 'support - moe' }
+GcExamples >> axisVector: anIndex dimension: aDimension [
+	"The anIndex-th standard basis vector of R^aDimension."
+	| vector |
+	vector := Array new: aDimension withAll: 0.0.
+	vector at: anIndex put: 1.0.
+	^ vector
+]
+
 { #category : 'examples - coverage' }
 GcExamples >> campaignPlanCoverage [
 	<gtExample>
@@ -699,6 +708,161 @@ GcExamples >> modelSourceComparisonViewsRender [
 	self assert: (mixed namingOverlapRows isKindOf: Array).
 	self assert: (mixed architectureComparison facetRows isKindOf: Array).
 	^ mixed
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterDecodesFromSyntheticSafetensors [
+	"GcMoeRouter fromTensorRef: decodes and row-major reshapes a real (in-memory) safetensors router tensor with one ranged read -- no network. Also proves routerTensors finds the gate.weight."
+	<gtExample>
+	| flatValues buffer header file routers router |
+	flatValues := #(1.0 2.0 3.0 4.0 5.0 6.0).
+	buffer := ByteArray new.
+	flatValues do: [ :each | buffer := buffer , (self f32LeBytes: each) ].
+	header := Dictionary new.
+	header at: 'model.layers.0.mlp.gate.weight' put: (Dictionary new
+		at: 'dtype' put: 'F32';
+		at: 'shape' put: #(2 3);
+		at: 'data_offsets' put: { 0. buffer size };
+		yourself).
+	file := GcSafetensorsFile new.
+	file path: 'synthetic-router'.
+	file parseHeaderDictionary: header.
+	file byteDataOffset: 0.
+	file bytesProvider: (GcInMemoryBytesProvider bytes: buffer dataOffset: 0).
+	routers := file tensorGroup routerTensors.
+	self assert: routers size equals: 1.
+	router := GcMoeRouter fromTensorRef: routers anyOne.
+	self assert: router expertCount equals: 2.
+	self assert: router hiddenSize equals: 3.
+	self assert: router weightMatrix equals: { #(1.0 2.0 3.0). #(4.0 5.0 6.0) }.
+	self assert: router layerId equals: 0.
+	^ router
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterPowerIterationRecoversDominantDirection [
+	"Power iteration on W^T W recovers the top right singular vector: with column 1 dominating, u aligns with e1 (up to sign) and the returned directions are orthonormal."
+	<gtExample>
+	| router directions u v |
+	router := GcMoeRouter
+		weightMatrix: { #(3.0 0.2 0.0 0.0). #(3.0 -0.1 0.0 0.0). #(3.0 0.15 0.0 0.0) }
+		expertCount: 3
+		hiddenSize: 4.
+	directions := router principalDirections: 2.
+	u := directions at: 1.
+	v := directions at: 2.
+	self assert: (u at: 1) abs > 0.99.
+	self assert: (u at: 3) abs < 0.01.
+	self assert: ((router dot: u with: u) closeTo: 1.0).
+	self assert: ((router dot: v with: v) closeTo: 1.0).
+	self assert: (router dot: u with: v) abs < 0.001.
+	^ router
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterQuantizationFlipsBoundaryCells [
+	"Simulated per-row int4 RTN rotates a router decision boundary, so a nonzero fraction of slice cells reroute -- the mechanism behind quantization-conditional routing anomalies. The planted two-expert router has a boundary that must move under rounding."
+	<gtExample>
+	| router slice map flip quantized |
+	router := GcMoeRouter
+		weightMatrix: { #(1.0 0.3). #(0.9 0.5) }
+		expertCount: 2
+		hiddenSize: 2.
+	slice := GcHiddenSlice
+		u: #(1.0 0.0)
+		v: #(0.0 1.0)
+		base: #(0.0 0.0)
+		extent: 1.0
+		resolution: 81
+		basisLabel: 'axes e1,e2'.
+	map := GcRouterRegionMap router: router slice: slice.
+	flip := map quantizationFlipFractionToBits: 4.
+	self assert: flip > 0.
+	self assert: flip < 0.5.
+	quantized := router quantizedToBits: 4.
+	self assert: quantized isQuantized.
+	self assert: (quantized quantizationLabel includesSubstring: 'NOT the real GGUF codebook').
+	^ map
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterRegionMapViewsRender [
+	"The three region-map views (expert regions, routing surface, quantization shift) build non-empty Bloc elements, and the winning-experts legend covers every cell."
+	<gtExample>
+	| map regionEl surfaceEl shiftEl regionCells |
+	map := self moeRouterTessellationHasKnownFourRegions.
+	regionEl := map expertRegionsElement.
+	surfaceEl := map routingSurfaceElement.
+	shiftEl := map quantizationShiftElementBits: 4.
+	self assert: (regionEl isKindOf: BlElement).
+	self assert: regionEl children size equals: 2.
+	self assert: (surfaceEl isKindOf: BlElement).
+	self assert: surfaceEl children notEmpty.
+	self assert: (shiftEl isKindOf: BlElement).
+	self assert: shiftEl children notEmpty.
+	self assert: (map gtExpertRegionsFor: GtPhlowView empty) notNil.
+	self assert: (map gtRoutingSurfaceFor: GtPhlowView empty) notNil.
+	self assert: (map gtQuantizationShiftFor: GtPhlowView empty) notNil.
+	self assert: (map gtWinningExpertsFor: GtPhlowView empty) notNil.
+	self assert: map expertRegions size equals: 4.
+	regionCells := map expertRegions inject: 0 into: [ :sum :region | sum + region cellCount ].
+	self assert: regionCells equals: map totalCells.
+	^ map
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterTensorsSelectedFromSyntheticHeader [
+	"routerTensors selects exactly the MoE gating routers (mlp.gate.weight, rank-2, multi-expert) and rejects decoys: single-row shared_expert_gate, per-expert gate_proj, and attention q_proj."
+	<gtExample>
+	| header offset add file routers |
+	header := Dictionary new.
+	offset := 0.
+	add := [ :tensorName :dims |
+		| elements bytes |
+		elements := dims inject: 1 into: [ :product :d | product * d ].
+		bytes := elements * 2.
+		header at: tensorName put: (Dictionary new
+			at: 'dtype' put: 'BF16';
+			at: 'shape' put: dims asArray;
+			at: 'data_offsets' put: { offset. offset + bytes };
+			yourself).
+		offset := offset + bytes ].
+	add value: 'model.layers.0.mlp.gate.weight' value: #(8 16).
+	add value: 'model.layers.1.mlp.gate.weight' value: #(8 16).
+	add value: 'model.layers.0.mlp.shared_expert_gate.weight' value: #(1 16).
+	add value: 'model.layers.0.mlp.experts.3.gate_proj.weight' value: #(16 16).
+	add value: 'model.layers.0.self_attn.q_proj.weight' value: #(16 16).
+	file := GcSafetensorsFile new.
+	file path: 'synthetic-moe'.
+	file parseHeaderDictionary: header.
+	routers := file tensorGroup routerTensors.
+	self assert: routers size equals: 2.
+	self assert: (routers allSatisfy: [ :t | t isRouterTensor ]).
+	self assert: (routers asArray collect: [ :t | t layerIndex ]) asSortedCollection asArray equals: #(0 1).
+	^ routers
+]
+
+{ #category : 'examples - moe router' }
+GcExamples >> moeRouterTessellationHasKnownFourRegions [
+	"The MoE router argmax tessellation is exact: a 4-expert router at the four diagonal directions carves the (e1,e2) slice into the four quadrants, one expert per quadrant."
+	<gtExample>
+	| router slice map |
+	router := self syntheticQuadrantRouter.
+	slice := GcHiddenSlice
+		u: (self axisVector: 1 dimension: 8)
+		v: (self axisVector: 2 dimension: 8)
+		base: (Array new: 8 withAll: 0.0)
+		extent: 1.0
+		resolution: 41
+		basisLabel: 'axes e1,e2'.
+	map := GcRouterRegionMap router: router slice: slice.
+	self assert: ((map argmaxGrid at: 11) at: 31) equals: 1.
+	self assert: ((map argmaxGrid at: 11) at: 11) equals: 2.
+	self assert: ((map argmaxGrid at: 31) at: 11) equals: 3.
+	self assert: ((map argmaxGrid at: 31) at: 31) equals: 4.
+	self assert: map distinctWinningExperts size equals: 4.
+	self assert: map totalCells equals: 41 * 41.
+	^ map
 ]
 
 { #category : 'examples-hypercube' }
@@ -1267,6 +1431,18 @@ GcExamples >> syntheticModelHeaderLayers: nLayers experts: expertsPerLayer [
 	add value: 'model.norm.weight' value: { hidden }.
 	add value: 'lm_head.weight' value: { 32000. hidden }.
 	^ header
+]
+
+{ #category : 'support - moe' }
+GcExamples >> syntheticQuadrantRouter [
+	"A 4-expert router whose rows sit at the four diagonal directions in the (e1,e2) plane, so on the e1,e2 slice through the origin it tessellates the plane into the four quadrants: expert 1 = (+,+), 2 = (-,+), 3 = (-,-), 4 = (+,-)."
+	^ GcMoeRouter
+		weightMatrix: { #(1.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0).
+			#(-1.0 1.0 0.0 0.0 0.0 0.0 0.0 0.0).
+			#(-1.0 -1.0 0.0 0.0 0.0 0.0 0.0 0.0).
+			#(1.0 -1.0 0.0 0.0 0.0 0.0 0.0 0.0) }
+		expertCount: 4
+		hiddenSize: 8
 ]
 
 { #category : 'fixtures - sharded' }

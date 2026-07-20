@@ -186,6 +186,18 @@ GcTensorRef >> isFullySampled [
 	^ self paramCount <= self class sampleElementCap
 ]
 
+{ #category : 'testing' }
+GcTensorRef >> isRouterTensor [
+	"True if this looks like a MoE top-k gating router weight: module 'gate' or 'router', role 'weight', rank-2 (experts x hidden) with more than one expert, and not a per-expert tensor. Matches Qwen/DeepSeek/OLMoE (mlp.gate.weight) and Mixtral (block_sparse_moe.gate.weight); excludes shared_expert_gate (single row) and dense mlp.gate_proj."
+	| parsed dims |
+	parsed := self parsedName.
+	((parsed module = 'gate') or: [ parsed module = 'router' ]) ifFalse: [ ^ false ].
+	parsed role = 'weight' ifFalse: [ ^ false ].
+	parsed isExpert ifTrue: [ ^ false ].
+	dims := self dimensions.
+	^ dims size = 2 and: [ dims first > 1 ]
+]
+
 { #category : 'querying' }
 GcTensorRef >> layerIndex [
 	^ self parsedName layerIndex

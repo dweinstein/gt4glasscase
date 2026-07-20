@@ -79,6 +79,12 @@ GcModelConfig >> modelType [
 	^ self at: 'model_type'
 ]
 
+{ #category : 'accessing' }
+GcModelConfig >> numExperts [
+	"MoE expert count under whichever key the model family uses; nil for dense models."
+	^ self atAny: #('num_experts' 'num_local_experts' 'n_routed_experts' 'moe_num_experts')
+]
+
 { #category : 'typed accessors' }
 GcModelConfig >> numHeads [
 	^ self atAny: #('num_attention_heads' 'n_head')
