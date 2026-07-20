@@ -84,6 +84,24 @@ GcHuggingFaceExamples >> liveTensorGroupByModule [
 	^ byModule
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveTensorSampleStats [
+	"End to end: fetch and decode a sampled slice of the smallest supported tensor of SmolLM2-135M via HTTP Range, and assert the Tier-1 statistics are sane. No weights downloaded wholesale (I5)."
+	<gtExample>
+	<noTest>
+	| file tensor stats |
+	file := self source safetensorsFileFor: self repositoryId file: 'model.safetensors'.
+	tensor := (file tensors select: [ :t | t supportsSampling ]) detectMin: [ :t | t byteSize ].
+	stats := tensor stats.
+	self assert: stats sampleCount > 0.
+	self assert: stats sampleCount <= GcTensorRef sampleElementCap.
+	self assert: stats nanCount equals: 0.
+	self assert: stats infCount equals: 0.
+	self assert: stats mean isFinite.
+	self assert: (stats min >= -10 and: [ stats max <= 10 ]).
+	^ stats
+]
+
 { #category : 'accessing' }
 GcHuggingFaceExamples >> repositoryId [
 	^ 'HuggingFaceTB/SmolLM2-135M'

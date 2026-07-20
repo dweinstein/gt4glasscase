@@ -8,7 +8,8 @@ Class {
 		'path',
 		'header',
 		'tensors',
-		'byteDataOffset'
+		'byteDataOffset',
+		'bytesProvider'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -33,7 +34,9 @@ GcSafetensorsFile >> buildTensors [
 
 { #category : 'accessing' }
 GcSafetensorsFile >> byteDataOffset [
-	^ byteDataOffset
+	"Absolute offset (8 + header length) where tensor data begins. Lazily obtained from the bytes provider when not set directly (hermetic tests set it via byteDataOffset:)."
+	^ byteDataOffset ifNil: [
+		byteDataOffset := bytesProvider ifNotNil: [ :p | p provideByteDataOffset ] ]
 ]
 
 { #category : 'accessing' }
@@ -52,6 +55,24 @@ GcSafetensorsFile >> byteSegments [
 	segments addAll: self sortedTensorExtents.
 	segments addAll: self slackRanges.
 	^ (segments asSortedCollection: [ :a :b | (startOf value: a) <= (startOf value: b) ]) asArray
+]
+
+{ #category : 'bytes port' }
+GcSafetensorsFile >> bytesFrom: startAbs to: endAbs [
+	"Absolute, inclusive byte range from the wired provider. The core never knows the transport."
+	bytesProvider isNil ifTrue: [ ^ self error: 'No bytes provider wired on this safetensors file' ].
+	^ bytesProvider provideBytesFrom: startAbs to: endAbs
+]
+
+{ #category : 'bytes port' }
+GcSafetensorsFile >> bytesProvider [
+	^ bytesProvider
+]
+
+{ #category : 'bytes port' }
+GcSafetensorsFile >> bytesProvider: anObject [
+	"An adapter-supplied object answering provideBytesFrom:to: and provideByteDataOffset. Keeps the core transport-free (hexagonal)."
+	bytesProvider := anObject
 ]
 
 { #category : 'views' }
@@ -150,6 +171,11 @@ GcSafetensorsFile >> gtTreeFor: aView [
 		priority: 2;
 		object: [ self tensorTree ];
 		view: #gtTreeFor:
+]
+
+{ #category : 'bytes port' }
+GcSafetensorsFile >> hasBytesProvider [
+	^ bytesProvider notNil
 ]
 
 { #category : 'accessing' }

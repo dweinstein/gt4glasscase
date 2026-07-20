@@ -10,7 +10,8 @@ Class {
 		'shape',
 		'beginOffset',
 		'endOffset',
-		'file'
+		'file',
+		'stats'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -23,6 +24,12 @@ GcTensorRef class >> name: aName dtype: aDtype shape: aShape [
 		dtype: aDtype;
 		shape: aShape;
 		yourself
+]
+
+{ #category : 'sampling' }
+GcTensorRef class >> sampleElementCap [
+	"Max elements decoded for an in-image sample: 65536 keeps the ranged fetch <= 256 KB even at f32 (I5/I7)."
+	^ 65536
 ]
 
 { #category : 'accessing' }
@@ -129,6 +136,35 @@ GcTensorRef >> gtDetailsFor: aView [
 		send: [ :assoc | assoc value ]
 ]
 
+{ #category : 'gt - views' }
+GcTensorRef >> gtSampleValuesFor: aView [
+	"The first decoded values of a sampled slice of this tensor."
+	<gtView>
+	self supportsSampling ifFalse: [ ^ aView empty ].
+	^ aView forward
+		title: 'Sample values';
+		priority: 5;
+		object: [ self stats ];
+		view: #gtSampleValuesFor:
+]
+
+{ #category : 'gt - views' }
+GcTensorRef >> gtValueDistributionFor: aView [
+	"What values does this tensor hold? (samples and decodes on demand, then delegates to the statistics)"
+	<gtView>
+	self supportsSampling ifFalse: [ ^ aView empty ].
+	^ aView forward
+		title: 'Value distribution';
+		priority: 4;
+		object: [ self stats ];
+		view: #gtValueDistributionFor:
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> isFullySampled [
+	^ self paramCount <= self class sampleElementCap
+]
+
 { #category : 'querying' }
 GcTensorRef >> layerIndex [
 	^ self parsedName layerIndex
@@ -166,6 +202,32 @@ GcTensorRef >> printOn: aStream [
 	aStream nextPut: $)
 ]
 
+{ #category : 'sampling' }
+GcTensorRef >> sampleElementCount [
+	^ self paramCount min: self class sampleElementCap
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> sampleSlice [
+	"Fetch (via the file's bytes port) and decode a leading contiguous span of this tensor's values -- the whole tensor when small, otherwise a capped sample. Absolute range = file dataOffset + this tensor's relative begin offset."
+	| width count absStart absEnd bytes decoder decoded |
+	self supportsSampling ifFalse: [ ^ self error: 'Sampling not supported for dtype ', dtype printString ].
+	file ifNil: [ ^ self error: 'Tensor has no owning file' ].
+	width := self dtypeByteWidth.
+	count := self sampleElementCount.
+	absStart := file byteDataOffset + beginOffset.
+	absEnd := absStart + (count * width) - 1.
+	bytes := file bytesFrom: absStart to: absEnd.
+	decoder := GcDtypeDecoder forDtype: dtype.
+	decoded := decoder decodeBytes: bytes.
+	^ GcTensorSlice tensorRef: self elementStart: 0 values: decoded isFull: self isFullySampled
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> sampleStats [
+	^ self stats
+]
+
 { #category : 'accessing' }
 GcTensorRef >> shape [
 	^ shape
@@ -179,4 +241,15 @@ GcTensorRef >> shape: aShapeOrArray [
 		ifFalse: [ (aShapeOrArray isKindOf: GcTensorShape)
 			ifTrue: [ aShapeOrArray ]
 			ifFalse: [ GcTensorShape fromArray: aShapeOrArray ] ]
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> stats [
+	"Lazily computed, cached Tier-1 numeric summary of a sampled slice of this tensor."
+	^ stats ifNil: [ stats := self sampleSlice stats ]
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> supportsSampling [
+	^ GcDtypeDecoder supportedDtypes includes: dtype
 ]

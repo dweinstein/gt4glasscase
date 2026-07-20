@@ -236,14 +236,15 @@ GcHuggingFaceModelSource >> safetensorsFile: aFileName [
 	^ self safetensorsFileFor: repositoryId file: aFileName
 ]
 
-{ #category : 'fetching' }
+{ #category : 'api - safetensors' }
 GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
-	"Translate the generic safetensors header into a GcSafetensorsFile of GcTensorRefs. The core class parses a plain Dictionary, so it stays decoupled from the HF client."
+	"Translate the generic safetensors header into a GcSafetensorsFile of GcTensorRefs, and wire a bytes provider so numeric views can sample tensor values on demand (I5: ranged reads only). The core class parses a plain Dictionary, so it stays decoupled from the HF client."
 	| header file |
 	header := client safetensorsHeader: aRepoId file: aFileName.
 	file := GcSafetensorsFile new.
 	file path: aRepoId, '/', aFileName.
 	file parseHeaderDictionary: header rawDictionary.
+	file bytesProvider: (GcHuggingFaceBytesProvider client: client repositoryId: aRepoId file: aFileName).
 	^ file
 ]
 

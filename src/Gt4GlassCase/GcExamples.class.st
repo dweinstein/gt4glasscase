@@ -189,6 +189,48 @@ GcExamples >> coordinateHoldsAxes [
 	^ coord
 ]
 
+{ #category : 'examples - tensor numerics' }
+GcExamples >> dtypeDecoderBf16KnownValues [
+	<gtExample>
+	| decoder |
+	self assert: (GcDtypeDecoder bf16FromU16: 16r3F80) equals: 1.0.
+	self assert: (GcDtypeDecoder bf16FromU16: 16rC000) equals: -2.0.
+	decoder := GcDtypeDecoder forDtype: #bf16.
+	self assert: (decoder decodeBytes: #[16r80 16r3F 16r00 16rC0]) equals: { 1.0. -2.0 }.
+	self assert: decoder bytesPerElement equals: 2.
+	^ decoder
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> dtypeDecoderF16KnownValues [
+	<gtExample>
+	| decoder |
+	self assert: (GcDtypeDecoder f16FromU16: 16r3C00) equals: 1.0.
+	self assert: (GcDtypeDecoder f16FromU16: 16r4000) equals: 2.0.
+	self assert: (GcDtypeDecoder f16FromU16: 16rC000) equals: -2.0.
+	self assert: (GcDtypeDecoder f16FromU16: 16r0001) equals: (2 raisedTo: -24) asFloat.
+	self assert: (GcDtypeDecoder f16FromU16: 16r7C00) isInfinite.
+	self assert: (GcDtypeDecoder f16FromU16: 16r7C00) positive.
+	self assert: (GcDtypeDecoder f16FromU16: 16rFC00) isInfinite.
+	self assert: (GcDtypeDecoder f16FromU16: 16rFC00) negative.
+	self assert: (GcDtypeDecoder f16FromU16: 16r7E00) isNaN.
+	decoder := GcDtypeDecoder forDtype: #f16.
+	self assert: (decoder decodeBytes: #[16r00 16r3C 16r00 16r40]) equals: { 1.0. 2.0 }.
+	^ decoder
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> dtypeDecoderF32KnownValues [
+	<gtExample>
+	| decoder |
+	self assert: (GcDtypeDecoder f32FromU32: 16r3F800000) equals: 1.0.
+	self assert: (GcDtypeDecoder f32FromU32: 16rC0000000) equals: -2.0.
+	decoder := GcDtypeDecoder forDtype: #f32.
+	self assert: (decoder decodeBytes: #[16r00 16r00 16r80 16r3F 16r00 16r00 16r00 16rC0]) equals: { 1.0. -2.0 }.
+	self assert: decoder bytesPerElement equals: 4.
+	^ decoder
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> fileDigestConfigJson [
 	<gtExample>
@@ -420,6 +462,35 @@ GcExamples >> tensorGroupPartitionByModule [
 	^ partitions
 ]
 
+{ #category : 'examples - tensor numerics' }
+GcExamples >> tensorHistogramBinMath [
+	<gtExample>
+	| stats hist total |
+	stats := GcTensorStats fromValues: { 0.0. 0.0. 10.0 }.
+	hist := stats histogram.
+	self assert: hist size equals: 40.
+	self assert: hist first count equals: 2.
+	self assert: hist last count equals: 1.
+	total := hist inject: 0 into: [ :acc :bin | acc + bin count ].
+	self assert: total equals: 3.
+	self assert: hist first lowerBound equals: 0.0.
+	self assert: hist last upperBound equals: 10.0.
+	^ stats
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> tensorHistogramDegenerateSingleBin [
+	<gtExample>
+	| stats |
+	stats := GcTensorStats fromValues: { 2.0. 2.0. 2.0 }.
+	self assert: stats histogram size equals: 1.
+	self assert: stats histogram first count equals: 3.
+	self assert: stats min equals: 2.0.
+	self assert: stats max equals: 2.0.
+	self assert: stats std equals: 0.0.
+	^ stats
+]
+
 { #category : 'examples-groups' }
 GcExamples >> tensorNameParsesMoe [
 	<gtExample>
@@ -432,6 +503,56 @@ GcExamples >> tensorNameParsesMoe [
 	self assert: name expertIndex equals: 7.
 	self assert: name isExpert.
 	^ name
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> tensorSliceReportsSampledProvenance [
+	<gtExample>
+	| ref slice fullSlice |
+	ref := GcTensorRef name: 'model.embed_tokens.weight' dtype: #bf16 shape: #(100 10).
+	slice := GcTensorSlice tensorRef: ref elementStart: 0 values: ((1 to: 64) collect: [ :i | i asFloat ]) isFull: false.
+	self assert: slice sampleCount equals: 64.
+	self assert: slice totalCount equals: 1000.
+	self assert: slice isSampled.
+	self assert: slice provenanceLabel equals: 'sampled 64 of 1,000'.
+	fullSlice := GcTensorSlice fromValues: { 1.0. 2.0. 3.0 }.
+	self assert: fullSlice isFull.
+	self assert: fullSlice provenanceLabel equals: 'full 3 of 3'.
+	^ slice
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> tensorStatsCountsNanInfAndZeros [
+	<gtExample>
+	| stats |
+	stats := GcTensorStats fromValues: { 0.0. 0.0. 2.0. Float nan. Float infinity. Float negativeInfinity }.
+	self assert: stats sampleCount equals: 6.
+	self assert: stats nanCount equals: 1.
+	self assert: stats infCount equals: 2.
+	self assert: stats zeroFraction equals: (2 / 6) asFloat.
+	self assert: stats mean equals: (2 / 3) asFloat.
+	self assert: stats min equals: 0.0.
+	self assert: stats max equals: 2.0.
+	self assert: stats healthLabel equals: 'NaN present (1)'.
+	^ stats
+]
+
+{ #category : 'examples - tensor numerics' }
+GcExamples >> tensorStatsOverSyntheticValues [
+	<gtExample>
+	| stats |
+	stats := GcTensorStats fromValues: { 1.0. 2.0. 3.0. 4.0. 5.0 }.
+	self assert: stats mean equals: 3.0.
+	self assert: stats min equals: 1.0.
+	self assert: stats max equals: 5.0.
+	self assert: (stats std closeTo: 2 sqrt).
+	self assert: (stats l2Norm closeTo: 55 sqrt).
+	self assert: stats nanCount equals: 0.
+	self assert: stats infCount equals: 0.
+	self assert: stats zeroFraction equals: 0.0.
+	self assert: stats sampleCount equals: 5.
+	self assert: stats totalCount equals: 5.
+	^ stats
 ]
 
 { #category : 'examples - twin check' }
