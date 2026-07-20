@@ -16,7 +16,9 @@ Class {
 		'controlDistances',
 		'centroid',
 		'candidates',
-		'candidateGroup'
+		'candidateGroup',
+		'mergeList',
+		'vocab'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -98,12 +100,13 @@ GcUndertrainedScan >> centroidOf: rows dimension: inner [
 	^ acc collect: [ :total | total / n ]
 ]
 
-{ #category : 'detecting' }
+{ #category : 'private' }
 GcUndertrainedScan >> computeFor: aRef unembedding: anLmHeadRefOrNil vocab: idToText controlBandStart: aStart controlBandSize: aCount candidateIds: candidateIds [
 	| inner bandSlice bandVals rows |
 	embeddingRef := aRef.
 	unembeddingRef := anLmHeadRefOrNil.
 	tied := anLmHeadRefOrNil isNil.
+	vocab := idToText.
 	controlBandStart := aStart.
 	controlBandSize := aCount.
 	inner := aRef innerSize.
@@ -173,10 +176,10 @@ GcUndertrainedScan >> embeddingRef [
 { #category : 'gt views' }
 GcUndertrainedScan >> gtNormScatterFor: aView [
 	<gtView>
-	"Norm vs token id: the control band as small grey dots, undertrained candidates coloured by suspicion score. Undertrained tokens fall off the main norm band toward zero. X = token id for now; the merge-rank X-axis arrives with DW-18."
+	"Norm vs token id / merge rank: the control band as small grey dots, undertrained candidates coloured by suspicion score. Undertrained tokens fall off the main norm band toward zero; when a merge list is attached (DW-18) the X axis is merge rank and they sit at high rank. X = merge rank when a merge list is attached, else token id."
 	candidates ifNil: [ ^ aView empty ].
 	^ aView explicit
-		title: 'Norm vs token id';
+		title: 'Norm vs ' , (self scatterUsesMergeRank ifTrue: [ 'merge rank' ] ifFalse: [ 'token id' ]);
 		priority: 2;
 		stencil: [ self scatterElement ]
 ]
@@ -216,6 +219,31 @@ GcUndertrainedScan >> l2Norm: aVector [
 	^ (aVector inject: 0.0 into: [ :acc :v | acc + (v * v) ]) sqrt
 ]
 
+{ #category : 'accessing' }
+GcUndertrainedScan >> mergeList [
+	"The attached BPE merge list (DW-18), or nil. When present the scatter X axis is merge rank."
+	^ mergeList
+]
+
+{ #category : 'accessing' }
+GcUndertrainedScan >> mergeList: aMergeListOrNil [
+	"Attach a BPE merge list so the norm scatter uses merge rank as its X axis; backfills each candidate's (and its vocab token's) merge rank from the token string."
+	mergeList := aMergeListOrNil.
+	aMergeListOrNil ifNotNil: [
+		candidates ifNotNil: [
+			candidates do: [ :ut | | r |
+				r := aMergeListOrNil rankForToken: ut text.
+				ut mergeRank: r.
+				ut vocabToken mergeRank: r ] ] ]
+]
+
+{ #category : 'scatter' }
+GcUndertrainedScan >> mergeRankForId: anId [
+	"Merge rank for a control-band row id, resolved via the attached merge list + vocab, or nil."
+	(mergeList isNil or: [ vocab isNil ]) ifTrue: [ ^ nil ].
+	^ mergeList rankForToken: (vocab at: anId ifAbsent: [ nil ])
+]
+
 { #category : 'private' }
 GcUndertrainedScan >> percentileExceeding: aValue in: aCollection [
 	"Fraction of the control population strictly greater than aValue -- a rank-normalized [0,1] score (1 = smaller / nearer than everything in the band)."
@@ -250,16 +278,16 @@ GcUndertrainedScan >> provenanceLabel [
 		self size printString, ' candidates scored'
 ]
 
-{ #category : 'gt views' }
+{ #category : 'scatter' }
 GcUndertrainedScan >> scatterChart [
-	"The configured norm-vs-id scatter chart: control band grey, candidates coloured by score. Reads cached state only."
+	"The configured norm scatter chart: control band grey, candidates coloured by score. X axis is merge rank when a merge list is attached, else token id. Reads cached state only."
 	| data |
 	data := GtPlotterDataGroup new values: self scatterPoints.
 	^ GtPlotterScatterChart new
 		with: data;
-		valueX: [ :p | p at: #id ];
+		valueX: [ :p | p at: #x ];
 		scaleX: GtPlotterLinearScale new;
-		titleX: 'Token id';
+		titleX: self xAxisTitle;
 		ticksX: 8;
 		valueY: [ :p | p at: #norm ];
 		scaleY: GtPlotterLinearScale new;
@@ -284,28 +312,37 @@ GcUndertrainedScan >> scatterElement [
 	^ self scatterChart create
 ]
 
-{ #category : 'private' }
+{ #category : 'scatter' }
 GcUndertrainedScan >> scatterPoints [
-	"Control rows (grey) plus scored candidates (colored) as plottable points for the norm-vs-id scatter."
+	"Control rows (grey) plus scored candidates (colored) as plottable points for the norm scatter. #x is merge rank when a merge list is attached (fallback: token id); #id is always the token id."
 	| points |
 	points := OrderedCollection new.
-	controlIds withIndexDo: [ :id :i |
+	controlIds withIndexDo: [ :id :i | | mr |
+		mr := self mergeRankForId: id.
 		points add: (Dictionary new
 			at: #id put: id;
+			at: #x put: (mr ifNil: [ id ]);
 			at: #norm put: (controlNorms at: i) asFloat;
 			at: #kind put: #control;
 			at: #score put: 0;
 			at: #label put: 'control row ', id printString;
 			yourself) ].
-	candidates do: [ :ut |
+	candidates do: [ :ut | | mr |
+		mr := ut mergeRank.
 		points add: (Dictionary new
 			at: #id put: ut tokenId;
+			at: #x put: (mr ifNil: [ ut tokenId ]);
 			at: #norm put: ut embeddingNorm asFloat;
 			at: #kind put: #candidate;
 			at: #score put: ut score;
 			at: #label put: ut text printString, ' score=', (ut score asFloat printShowingDecimalPlaces: 3);
 			yourself) ].
 	^ points asArray
+]
+
+{ #category : 'scatter' }
+GcUndertrainedScan >> scatterUsesMergeRank [
+	^ mergeList notNil
 ]
 
 { #category : 'private' }
@@ -334,4 +371,15 @@ GcUndertrainedScan >> topCandidates: n [
 		withItems: top
 		derivedBy: #topCandidates
 		parameters: (Dictionary new at: #n put: n; yourself)
+]
+
+{ #category : 'accessing' }
+GcUndertrainedScan >> vocab [
+	"The id -> token-string map used to build candidates (nil for a pure in-memory fixture without vocab)."
+	^ vocab
+]
+
+{ #category : 'scatter' }
+GcUndertrainedScan >> xAxisTitle [
+	^ self scatterUsesMergeRank ifTrue: [ 'Merge rank' ] ifFalse: [ 'Token id' ]
 ]

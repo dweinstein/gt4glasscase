@@ -493,6 +493,98 @@ GcExamples >> manifestQwen3 [
 	^ manifest
 ]
 
+{ #category : 'examples - merges' }
+GcExamples >> mergeListCategoryCompositionIsExact [
+	<gtExample>
+	"categoryCounts and categoryCompositionOverRank are exact on the synthetic list: 5 letter, 2 whitespace, 1 digit, 1 cjk, 1 punctuation; and the cumulative snapshot at k=4 has 2 letter + 2 whitespace."
+	| ml counts comp last k4 |
+	ml := self syntheticMergeList.
+	counts := ml categoryCounts.
+	self assert: (counts at: #asciiLetter) equals: 5.
+	self assert: (counts at: #whitespace) equals: 2.
+	self assert: (counts at: #digit) equals: 1.
+	self assert: (counts at: #cjk) equals: 1.
+	self assert: (counts at: #punctuation) equals: 1.
+	self assert: (counts at: #otherNonAscii) equals: 0.
+	comp := ml categoryCompositionOverRank.
+	self assert: comp size equals: 10.
+	last := comp last at: #cumulative.
+	self assert: (last at: #asciiLetter) equals: 5.
+	self assert: (last at: #whitespace) equals: 2.
+	k4 := (comp detect: [ :rec | (rec at: #rank) = 4 ]) at: #cumulative.
+	self assert: (k4 at: #asciiLetter) equals: 2.
+	self assert: (k4 at: #whitespace) equals: 2.
+	self assert: (k4 at: #digit) equals: 0.
+	^ ml
+]
+
+{ #category : 'examples - merges' }
+GcExamples >> mergeListFingerprintAndListViewsRender [
+	<gtExample>
+	"The corpus-fingerprint chart element renders non-empty and the fingerprint / merges / suspected gtViews all resolve over the synthetic list."
+	| ml element |
+	ml := self syntheticMergeList.
+	element := ml fingerprintChartElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children notEmpty.
+	self assert: (ml gtCorpusFingerprintFor: GtPhlowView empty) notNil.
+	self assert: (ml gtMergesFor: GtPhlowView empty) notNil.
+	self assert: (ml gtSuspectedManualMergesFor: GtPhlowView empty) notNil.
+	self assert: ml rules size equals: 10.
+	self assert: ml suspectedManualMergeRules size equals: 2.
+	^ ml
+]
+
+{ #category : 'examples - merges' }
+GcExamples >> mergeListRanksTokensAndFlagsPlantedMerges [
+	<gtExample>
+	"rankForToken: is exact, producedCategory classifies known cases (byte-level markers stripped), and suspectedManualMerges flags EXACTLY the two planted whitespace-run merges (ranks 1 and 3)."
+	| ml sp suspects |
+	ml := self syntheticMergeList.
+	sp := (Character value: 288) asString.
+	self assert: ml size equals: 10.
+	self assert: (ml rankForToken: 'th') equals: 0.
+	self assert: (ml rankForToken: 'the') equals: 2.
+	self assert: (ml rankForToken: sp , sp) equals: 1.
+	self assert: (ml rankForToken: 'z') isNil.
+	self assert: (ml ruleAt: 1) producedCategory equals: #whitespace.
+	self assert: (ml ruleAt: 5) producedCategory equals: #digit.
+	self assert: (ml ruleAt: 2) producedCategory equals: #asciiLetter.
+	self assert: (ml ruleAt: 6) producedCategory equals: #asciiLetter.
+	self assert: (ml ruleAt: 7) producedCategory equals: #cjk.
+	self assert: (ml ruleAt: 9) producedCategory equals: #punctuation.
+	self assert: (ml ruleAt: 1) isWhitespaceRun.
+	self assert: (ml ruleAt: 3) isWhitespaceRun.
+	suspects := ml suspectedManualMerges.
+	self assert: (suspects isKindOf: GcMergeList).
+	self assert: (suspects rules collect: [ :r | r rank ]) asArray equals: #(1 3).
+	self assert: (suspects rules allSatisfy: [ :r | (ml manualMergeReasonFor: r) includesSubstring: 'whitespace-run' ]).
+	^ ml
+]
+
+{ #category : 'examples - merges' }
+GcExamples >> mixtureSolutionViewShowsResidual [
+	<gtExample>
+	"A planted poor-fit GcMixtureSolution renders proportions with the residual shown prominently; the residual value and POOR FIT verdict appear in the subtitle (a bad fit must be visible)."
+	| props solution element |
+	props := Dictionary new.
+	props at: 'code' put: 0.55.
+	props at: 'english-prose' put: 0.3.
+	props at: 'cjk' put: 0.15.
+	solution := GcMixtureSolution proportions: props residual: 0.42 provenance: 'planted/synthetic (DW-18 scaffold)'.
+	self assert: solution residual equals: 0.42.
+	self assert: solution isGoodFit not.
+	self assert: (solution gtSolutionSubtitle includesSubstring: '0.42').
+	self assert: (solution gtSolutionSubtitle includesSubstring: 'POOR FIT').
+	self assert: solution sortedProportions first key equals: 'code'.
+	element := solution solutionElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children notEmpty.
+	self assert: (solution gtSolutionFor: GtPhlowView empty) notNil.
+	self assert: (solution gtProportionsFor: GtPhlowView empty) notNil.
+	^ solution
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> modelFamilyQwen3 [
 	<gtExample>
@@ -709,6 +801,34 @@ GcExamples >> safetensorsTightFileHasNoSlack [
 	file parseHeaderDictionary: h.
 	self assert: file slackRanges isEmpty.
 	^ file
+]
+
+{ #category : 'examples - merges' }
+GcExamples >> scatterUsesMergeRankWhenMergeListAttached [
+	<gtExample>
+	"Attaching a merge list to an undertrained scan switches the norm scatter's X axis to merge rank and backfills each candidate's (and its vocab token's) merge rank; a control-band id resolves its rank via the vocab. Without a merge list the scatter stays token id (backward compatible)."
+	| scan ml magikarp points magikarpPoint tok5Control |
+	scan := self undertrainedDetectorRanksPlantedTokens.
+	self assert: scan scatterUsesMergeRank not.
+	self assert: scan xAxisTitle equals: 'Token id'.
+	ml := GcMergeList rules: {
+		(GcMergeRule left: 'tok' right: '5' rank: 3).
+		(GcMergeRule left: ' SolidGold' right: 'Magikarp' rank: 999).
+		(GcMergeRule left: ' peter' right: 'todd' rank: 1234) }.
+	scan mergeList: ml.
+	self assert: scan scatterUsesMergeRank.
+	self assert: scan xAxisTitle equals: 'Merge rank'.
+	magikarp := scan candidates detect: [ :ut | ut text = ' SolidGoldMagikarp' ].
+	self assert: magikarp mergeRank equals: 999.
+	self assert: magikarp vocabToken mergeRank equals: 999.
+	points := scan scatterPoints.
+	magikarpPoint := points detect: [ :p | (p at: #kind) = #candidate and: [ (p at: #id) = 48 ] ].
+	self assert: (magikarpPoint at: #x) equals: 999.
+	tok5Control := points detect: [ :p | (p at: #kind) = #control and: [ (p at: #id) = 5 ] ].
+	self assert: (tok5Control at: #x) equals: 3.
+	self assert: (scan gtNormScatterFor: GtPhlowView empty) notNil.
+	self assert: scan scatterElement children notEmpty.
+	^ scan
 ]
 
 { #category : 'examples - signal flow' }
@@ -938,6 +1058,25 @@ GcExamples >> syntheticGpt2HeaderLayers: nLayers [
 	add value: 'ln_f.weight' value: { hidden }.
 	add value: 'ln_f.bias' value: { hidden }.
 	^ header
+]
+
+{ #category : 'fixtures - merges' }
+GcExamples >> syntheticMergeList [
+	"A tiny hand-authored ordered BPE merge list: mostly ordinary letter/digit/punctuation/CJK merges, with TWO whitespace-run merges planted at low rank (1 and 3). Fully hermetic; the fingerprint and heuristic are checked against it."
+	| sp rules |
+	sp := (Character value: 288) asString.
+	rules := OrderedCollection new.
+	rules add: (GcMergeRule left: 't' right: 'h' rank: 0).
+	rules add: (GcMergeRule left: sp right: sp rank: 1).
+	rules add: (GcMergeRule left: 'th' right: 'e' rank: 2).
+	rules add: (GcMergeRule left: sp , sp right: sp rank: 3).
+	rules add: (GcMergeRule left: 'i' right: 'n' rank: 4).
+	rules add: (GcMergeRule left: '1' right: '2' rank: 5).
+	rules add: (GcMergeRule left: sp right: 'the' rank: 6).
+	rules add: (GcMergeRule left: (Character value: 16r4F60) asString right: (Character value: 16r597D) asString rank: 7).
+	rules add: (GcMergeRule left: sp right: 'a' rank: 8).
+	rules add: (GcMergeRule left: '!' right: '?' rank: 9).
+	^ GcMergeList rules: rules
 ]
 
 { #category : 'fixtures' }

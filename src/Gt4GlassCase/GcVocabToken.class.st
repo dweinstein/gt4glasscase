@@ -7,7 +7,8 @@ Class {
 	#instVars : [
 		'tokenId',
 		'text',
-		'flags'
+		'flags',
+		'mergeRank'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -93,6 +94,17 @@ GcVocabToken >> hexBytes [
 { #category : 'testing' }
 GcVocabToken >> isAnomalous [
 	^ self flags notEmpty
+]
+
+{ #category : 'accessing' }
+GcVocabToken >> mergeRank [
+	"The BPE merge rank at which this token's string was first formed (DW-18), or nil for a base byte / when no merge list is attached."
+	^ mergeRank
+]
+
+{ #category : 'accessing' }
+GcVocabToken >> mergeRank: anIntegerOrNil [
+	mergeRank := anIntegerOrNil
 ]
 
 { #category : 'printing' }

@@ -9,7 +9,8 @@ Class {
 		'repositoryId',
 		'cachedConfig',
 		'cachedFile',
-		'cachedUndertrainedScan'
+		'cachedUndertrainedScan',
+		'cachedMergeList'
 	],
 	#category : 'Gt4GlassCase-HuggingFace',
 	#package : 'Gt4GlassCase-HuggingFace'
@@ -32,11 +33,12 @@ GcHuggingFaceModelSource >> architectureFor: aRepoId [
 	^ (self configFor: aRepoId) architecture
 ]
 
-{ #category : 'convenience' }
+{ #category : 'initialization' }
 GcHuggingFaceModelSource >> clearCache [
-	"Drop cached config/file so the next access re-fetches."
+	"Drop cached config/file/merge list so the next access re-fetches."
 	cachedConfig := nil.
-	cachedFile := nil
+	cachedFile := nil.
+	cachedMergeList := nil
 ]
 
 { #category : 'accessing' }
@@ -101,6 +103,18 @@ GcHuggingFaceModelSource >> gtArchitectureFor: aView [
 		view: #gtOverviewFor:
 ]
 
+{ #category : 'gt views' }
+GcHuggingFaceModelSource >> gtCorpusFingerprintFor: aView [
+	<gtView>
+	"Corpus fingerprint of the tokenizer's BPE merges. Reads the cached merge list only; run the 'Fetch merge list' action (or an example) to populate it."
+	cachedMergeList ifNil: [ ^ aView empty ].
+	^ aView forward
+		title: 'Corpus fingerprint';
+		priority: 10;
+		object: [ cachedMergeList ];
+		view: #gtCorpusFingerprintFor:
+]
+
 { #category : 'views' }
 GcHuggingFaceModelSource >> gtDeadWeightsFor: aView [
 	<gtView>
@@ -129,6 +143,21 @@ GcHuggingFaceModelSource >> gtDeadWeightsFor: aView [
 		column: 'Status' text: [ :row | row at: 1 ];
 		column: 'Tensor' text: [ :row | row at: 2 ];
 		send: [ :row | row at: 3 ]
+]
+
+{ #category : 'gt actions' }
+GcHuggingFaceModelSource >> gtMergeListActionFor: anAction [
+	<gtAction>
+	^ anAction button
+		tooltip: 'Fetch the BPE merge list (tokenizer.json / merges.txt) over HTTP, then open it';
+		priority: 26;
+		icon: BrGlamorousVectorIcons inspect;
+		action: [ :aButton |
+			[ | ml |
+			ml := self mergeList.
+			aButton enqueueTask: (BlTaskAction new action: [
+				aButton phlow spawnObject: ml ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
 { #category : 'gt actions' }
@@ -248,6 +277,21 @@ GcHuggingFaceModelSource >> label [
 	^ repositoryId
 ]
 
+{ #category : 'merge list' }
+GcHuggingFaceModelSource >> loadMergeList [
+	"Fetch the tokenizer's ordered BPE merge list over bounded HTTP: prefer tokenizer.json (single source: model.merges when model.type = 'BPE'); else fall back to the legacy gpt2-style merges.txt. Returns a GcMergeList (~1.4MB for gpt2's tokenizer.json). NOT called from any render block."
+	| dict model type merges |
+	dict := [ client getJson: (client resolveUrlFor: repositoryId file: 'tokenizer.json') ]
+		on: Error do: [ :e | nil ].
+	dict ifNotNil: [
+		model := dict at: 'model' ifAbsent: [ Dictionary new ].
+		type := model at: 'type' ifAbsent: [ nil ].
+		merges := model at: 'merges' ifAbsent: [ nil ].
+		(type = 'BPE' and: [ merges notNil and: [ merges notEmpty ] ])
+			ifTrue: [ ^ GcMergeList fromMergesArray: merges ] ].
+	^ GcMergeList fromMergesText: (client getString: (client resolveUrlFor: repositoryId file: 'merges.txt'))
+]
+
 { #category : 'loading' }
 GcHuggingFaceModelSource >> loadMetadata [
 	"Force-fetch and cache config.json + the default safetensors header over bounded HTTP. NOT called from any render block."
@@ -260,6 +304,12 @@ GcHuggingFaceModelSource >> loadMetadata [
 GcHuggingFaceModelSource >> loadedConfig [
 	"The cached config, if already fetched -- no network (I5)."
 	^ cachedConfig
+]
+
+{ #category : 'merge list' }
+GcHuggingFaceModelSource >> loadedMergeList [
+	"The cached merge list, or nil if not yet loaded (render-safe)."
+	^ cachedMergeList
 ]
 
 { #category : 'cached access' }
@@ -293,6 +343,12 @@ GcHuggingFaceModelSource >> manifestFor: aRepoId [
 					ifNotNil: [ :lfs | lfs at: 'oid' ifAbsent: [ nil ] ]
 					ifNil: [ entry at: 'oid' ifAbsent: [ nil ] ])) ] ].
 	^ manifest
+]
+
+{ #category : 'merge list' }
+GcHuggingFaceModelSource >> mergeList [
+	"Cached: the BPE merge list, fetched once per source (force-fetch). NOT from render blocks."
+	^ cachedMergeList ifNil: [ cachedMergeList := self loadMergeList ]
 ]
 
 { #category : 'printing' }
@@ -376,9 +432,9 @@ GcHuggingFaceModelSource >> tokenGroup [
 	^ GcTokenGroup fromVocabulary: vocab merges: merges specialTokens: specials
 ]
 
-{ #category : 'undertrained tokens' }
+{ #category : 'operations' }
 GcHuggingFaceModelSource >> undertrainedScanForCandidateIds: idColl controlBandStart: aStart controlBandSize: aCount [
-	"Build (and cache) a GcUndertrainedScan over this model's embedding tensor: fetch vocab.json + one control band of aCount rows + one row per candidate id (I5: bounded ranged reads, never the whole matrix), scoring embedding-norm evidence. NOT called from any render block -- driven by an example or the <gtAction>."
+	"Build (and cache) a GcUndertrainedScan over this model's embedding tensor: fetch vocab.json + one control band of aCount rows + one row per candidate id (I5: bounded ranged reads, never the whole matrix), scoring embedding-norm evidence. Attaches the cached merge list (nil-safe) so the norm scatter can use merge-rank X. NOT called from any render block -- driven by an example or the <gtAction>."
 	| file emb lmHead vocab scan |
 	file := self safetensorsFile.
 	emb := self embeddingTensorIn: file.
@@ -391,6 +447,7 @@ GcHuggingFaceModelSource >> undertrainedScanForCandidateIds: idColl controlBandS
 		controlBandStart: aStart
 		controlBandSize: aCount
 		candidateIds: idColl.
+	scan mergeList: self loadedMergeList.
 	cachedUndertrainedScan := scan.
 	^ scan
 ]

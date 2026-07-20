@@ -44,6 +44,37 @@ GcHuggingFaceExamples >> liveCrossModelArchitectures [
 	^ results
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveGpt2CorpusFingerprintFromMerges [
+	"End to end on REAL gpt2: fetch the ordered BPE merge list (tokenizer.json preferred, ~1.4MB single GET), build the GcMergeList (50000 rules), and record empirical facts. Bounded ranged reads only (I5): one tokenizer.json GET.
+
+	OBSERVED (2026-07, this run): gpt2 has exactly 50000 merges, ranks contiguous 0..49999. The FIRST learned merge is space+'t' -> Gt (U+0120 't'), category asciiLetter -- the single most frequent byte pair in gpt2's corpus. Produced-category totals: asciiLetter 46868, digit 1681, punctuation 746, otherNonAscii 704, whitespace 1, cjk 0 (gpt2 is overwhelmingly English/ASCII, almost no whitespace-run or CJK merges -- itself a fingerprint of an English web corpus). suspectedManualMerges (heuristic: low-rank + structurally odd) flags 4: '--'@182, '..'@236, the double-newline whitespace run @372, '----'@394 -- small, as expected for a learned tokenizer, with NO early space-run family (unlike Gemma)."
+	<gtExample>
+	<noTest>
+	| source ml sp firstRule ranksOk suspects |
+	source := GcHuggingFaceModelSource forRepository: 'openai-community/gpt2'.
+	ml := source mergeList.
+	self assert: ml size equals: 50000.
+	ranksOk := (ml rules withIndexCollect: [ :r :i | r rank = (i - 1) ]) allSatisfy: [ :b | b ].
+	self assert: ranksOk.
+	self assert: (ml ruleAt: 0) rank equals: 0.
+	self assert: (ml ruleAt: 49999) rank equals: 49999.
+	sp := (Character value: 288) asString.
+	firstRule := ml ruleAt: 0.
+	self assert: firstRule left equals: sp.
+	self assert: firstRule right equals: 't'.
+	self assert: firstRule merged equals: sp , 't'.
+	self assert: firstRule producedCategory equals: #asciiLetter.
+	suspects := ml suspectedManualMerges.
+	self assert: suspects size equals: 4.
+	self assert: (suspects rules anySatisfy: [ :r | r isWhitespaceRun ]).
+	self assert: (ml categoryCounts at: #asciiLetter) > 40000.
+	self assert: (ml categoryCounts at: #cjk) equals: 0.
+	self assert: (ml fingerprintChartElement isKindOf: BlElement).
+	self assert: ml fingerprintChartElement children notEmpty.
+	^ ml
+]
+
 { #category : 'examples - signal flow' }
 GcHuggingFaceExamples >> liveGpt2SignalFlowDetectsFusedAttention [
 	"Load the real gpt2 metadata (config.json + safetensors header, KB-scale) through the adapter and derive the signal-flow wiring. gpt2 is the deliberate fused case: a single fused c_attn projection, no split q_proj. Returns the source so the diagram itself can be rendered."

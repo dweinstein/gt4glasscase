@@ -84,7 +84,7 @@ GcUndertrainedToken >> detailFacets [
 		'Unembedding L2 norm' -> (self unembeddingNorm ifNil: [ 'n/a' ]).
 		'Output tied?' -> (self tied isNil ifTrue: [ 'unknown' ] ifFalse: [ self tied ]).
 		'Distance to centroid' -> self centroidDistance.
-		'Merge rank' -> (self mergeRank ifNil: [ 'unknown (DW-18)' ]).
+		'Merge rank' -> (self mergeRank ifNil: [ 'base byte / unmerged' ]).
 		'Norm percentile score' -> self normScore.
 		'Centroid percentile score' -> self centroidScore.
 		'Suspicion score' -> self score.
