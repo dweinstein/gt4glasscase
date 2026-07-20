@@ -187,6 +187,31 @@ GcHuggingFaceModelSource >> injectTokenIfPresent [
 	ref exists ifTrue: [ client token: ref contents trimmed ]
 ]
 
+{ #category : 'accessing' }
+GcHuggingFaceModelSource >> label [
+	^ repositoryId
+]
+
+{ #category : 'loading' }
+GcHuggingFaceModelSource >> loadMetadata [
+	"Force-fetch and cache config.json + the default safetensors header over bounded HTTP. NOT called from any render block."
+	self config.
+	self safetensorsFile.
+	^ self
+]
+
+{ #category : 'cached access' }
+GcHuggingFaceModelSource >> loadedConfig [
+	"The cached config, if already fetched -- no network (I5)."
+	^ cachedConfig
+]
+
+{ #category : 'cached access' }
+GcHuggingFaceModelSource >> loadedSafetensorsFile [
+	"The cached safetensors file, if the header was already fetched -- no network (I5)."
+	^ cachedFile
+]
+
 { #category : 'convenience' }
 GcHuggingFaceModelSource >> manifest [
 	^ self manifestFor: repositoryId

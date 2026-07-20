@@ -490,6 +490,113 @@ GcExamples >> modelFamilyQwen3 [
 	^ family
 ]
 
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonArchitecture [
+	"The Architecture comparison forwards to GcArchitectureComparison: one column per model, differing facets marked."
+	<gtExample>
+	| group comparison layersRow |
+	group := self modelSourceComparisonGroup.
+	comparison := group architectureComparison.
+	self assert: comparison labels size equals: 2.
+	self assert: comparison architectures size equals: 2.
+	layersRow := comparison facetRows detect: [ :r | r first = 'Layers' ].
+	self assert: (layersRow at: 3) equals: false.
+	^ comparison
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonConfigDiff [
+	"The config-diff finds EXACTLY the three planted differing knobs; the rest collapse into an identical-keys count."
+	<gtExample>
+	| group rows |
+	group := self modelSourceComparisonGroup.
+	self assert: group configDiffKeys asArray
+		equals: #('num_hidden_layers' 'num_key_value_heads' 'rope_theta').
+	rows := group configDiffRows.
+	self assert: (rows first first) equals: '5 identical keys'.
+	self assert: rows size equals: 4.
+	^ rows
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonGroup [
+	"compareWith: builds a species-correct, lineage-stamped GcModelSourceGroup of two model sources (I2 + I3)."
+	<gtExample>
+	| a b group |
+	a := self stubModelSourceA.
+	b := self stubModelSourceB.
+	group := a compareWith: b.
+	self assert: (group isKindOf: GcModelSourceGroup).
+	self assert: group size equals: 2.
+	self assert: group loadedCount equals: 2.
+	self assert: group derivation operation equals: #compareWith:.
+	self assert: (group derivation parameters at: #with) == b.
+	self assert: ((group select: [ :each | true ]) isKindOf: GcModelSourceGroup).
+	^ group
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonNamingOverlap [
+	"Tensor-name overlap is exact on the planted names: A's 21 names are all shared, B adds 9 unique (its extra layer)."
+	<gtExample>
+	| group a b loaded |
+	group := self modelSourceComparisonGroup.
+	a := group items first.
+	b := group items second.
+	loaded := group items.
+	self assert: group sharedTensorNames size equals: 21.
+	self assert: (group uniqueTensorNamesFor: a among: loaded) size equals: 0.
+	self assert: (group uniqueTensorNamesFor: b among: loaded) size equals: 9.
+	^ group namingOverlapRows
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonSizeAndShape [
+	"Size & shape rows read the planted architectures and tensor headers, formatting GQA vs MHA heads correctly."
+	<gtExample>
+	| group a b |
+	group := self modelSourceComparisonGroup.
+	a := group items first.
+	b := group items second.
+	self assert: (group configFacet: [ a loadedArchitecture numLayers ] of: a) equals: '2'.
+	self assert: (group configFacet: [ b loadedArchitecture numLayers ] of: b) equals: '3'.
+	self assert: (group headsDisplayFor: a) equals: '8/2 GQA'.
+	self assert: (group headsDisplayFor: b) equals: '8 MHA'.
+	self assert: (group tensorFacet: [ a loadedTensorGroup size ] of: a) equals: '21'.
+	self assert: (group tensorFacet: [ b loadedTensorGroup size ] of: b) equals: '30'.
+	^ group
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> modelSourceComparisonViewsRender [
+	"All comparison views render non-empty on a fully-loaded stub group, and render placeholders (not errors) when a member is UNLOADED -- render blocks read only cached state and never touch the missing metadata."
+	<gtExample>
+	| group viewSelectors unloaded mixed |
+	group := self modelSourceComparisonGroup.
+	viewSelectors := #(gtModelsFor: gtArchitectureComparisonFor: gtSizeAndShapeFor: gtParamBudgetFor: gtConfigDiffFor: gtNamingSchemeFor:).
+	viewSelectors do: [ :sel |
+		| view |
+		view := group perform: sel with: GtPhlowView empty.
+		self assert: view notNil.
+		self assert: (view isKindOf: GtPhlowEmptyView) not ].
+	unloaded := GcInMemoryModelSource new label: 'unloaded-stub'; yourself.
+	mixed := GcModelSourceGroup withAll: { self stubModelSourceA. unloaded }.
+	viewSelectors do: [ :sel |
+		| view |
+		view := mixed perform: sel with: GtPhlowView empty.
+		self assert: view notNil.
+		self assert: (view isKindOf: GtPhlowEmptyView) not ].
+	self assert: mixed loadedCount equals: 1.
+	self assert: (mixed configFacet: [ 1/0 ] of: unloaded) equals: 'not loaded'.
+	self assert: (mixed tensorFacet: [ 1/0 ] of: unloaded) equals: 'not loaded'.
+	self assert: (mixed headsDisplayFor: unloaded) equals: 'not loaded'.
+	self assert: (mixed paramShareText: #attention of: unloaded) equals: 'not loaded'.
+	self assert: (mixed configDiffRows isKindOf: Array).
+	self assert: (mixed namingOverlapRows isKindOf: Array).
+	self assert: (mixed architectureComparison facetRows isKindOf: Array).
+	^ mixed
+]
+
 { #category : 'examples-hypercube' }
 GcExamples >> precisionAxis [
 	<gtExample>
@@ -630,6 +737,52 @@ GcExamples >> skylineRendersWithStructuralAnomaly [
 	self assert: (group regularityScoreFor: planted) absZ > 2.
 	self assert: (group regularityScoreFor: planted) isStructuralMetric.
 	^ file
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> stubModelSourceA [
+	"A hermetic in-memory model source: a 2-layer GQA (8/2) llama-style stub with a matching synthetic safetensors header (21 tensors). No network."
+	<gtExample>
+	| config file source |
+	config := GcModelConfig fromDictionary: (Dictionary new
+		at: 'model_type' put: 'llama';
+		at: 'hidden_size' put: 64;
+		at: 'num_attention_heads' put: 8;
+		at: 'num_key_value_heads' put: 2;
+		at: 'num_hidden_layers' put: 2;
+		at: 'vocab_size' put: 32000;
+		at: 'intermediate_size' put: 128;
+		at: 'rope_theta' put: 10000;
+		yourself).
+	file := self syntheticModelFileNamed: 'stub-a/model.safetensors' layers: 2 experts: 0.
+	source := GcInMemoryModelSource named: 'stub-a' config: config safetensorsFile: file.
+	self assert: source isMetadataLoaded.
+	self assert: source loadedArchitecture numLayers equals: 2.
+	self assert: source loadedTensorGroup size equals: 21.
+	^ source
+]
+
+{ #category : 'examples - model source comparison' }
+GcExamples >> stubModelSourceB [
+	"A hermetic in-memory model source: a 3-layer MHA (8/8) llama-style stub differing from stub A on exactly three config knobs (layers, kv-heads, rope_theta) and one extra transformer layer (30 tensors). No network."
+	<gtExample>
+	| config file source |
+	config := GcModelConfig fromDictionary: (Dictionary new
+		at: 'model_type' put: 'llama';
+		at: 'hidden_size' put: 64;
+		at: 'num_attention_heads' put: 8;
+		at: 'num_key_value_heads' put: 8;
+		at: 'num_hidden_layers' put: 3;
+		at: 'vocab_size' put: 32000;
+		at: 'intermediate_size' put: 128;
+		at: 'rope_theta' put: 50000;
+		yourself).
+	file := self syntheticModelFileNamed: 'stub-b/model.safetensors' layers: 3 experts: 0.
+	source := GcInMemoryModelSource named: 'stub-b' config: config safetensorsFile: file.
+	self assert: source isMetadataLoaded.
+	self assert: source loadedArchitecture numLayers equals: 3.
+	self assert: source loadedTensorGroup size equals: 30.
+	^ source
 ]
 
 { #category : 'fixtures' }

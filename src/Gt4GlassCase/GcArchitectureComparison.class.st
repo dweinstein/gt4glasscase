@@ -23,7 +23,7 @@ GcArchitectureComparison >> architectures [
 	^ (labeledArchitectures collect: [ :each | each value ]) asArray
 ]
 
-{ #category : 'comparing' }
+{ #category : 'accessing' }
 GcArchitectureComparison >> facetRows [
 	| facets |
 	facets := OrderedCollection new.
@@ -36,8 +36,9 @@ GcArchitectureComparison >> facetRows [
 	^ (facets collect: [ :facet |
 		| selector values allSame |
 		selector := facet value.
-		values := self architectures collect: [ :architecture | architecture perform: selector ].
-		allSame := values asSet size <= 1.
+		values := self architectures collect: [ :architecture |
+			architecture isNil ifTrue: [ nil ] ifFalse: [ architecture perform: selector ] ].
+		allSame := (values reject: [ :v | v isNil ]) asSet size <= 1.
 		{ facet key. values. allSame } ]) asArray
 ]
 

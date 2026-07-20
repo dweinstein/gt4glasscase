@@ -76,6 +76,24 @@ GcHuggingFaceExamples >> liveLayerValueDriftCurveHasEnoughPoints [
 	^ layers
 ]
 
+{ #category : 'examples - live' }
+GcHuggingFaceExamples >> liveModelSourceComparison [
+	"Group three real, differently-named small public models, load their metadata over bounded HTTP (config.json + safetensors header only -- I5), and prove the comparison holds: one architecture column per model, model_type among the differing config knobs, and near-zero tensor-name overlap between the llama-style and gpt2-style checkpoints."
+	<gtExample>
+	<noTest>
+	| sources group |
+	sources := #('HuggingFaceTB/SmolLM2-135M' 'Qwen/Qwen2.5-0.5B' 'openai-community/gpt2')
+		collect: [ :repo | GcHuggingFaceModelSource forRepository: repo ].
+	group := GcModelSourceGroup withAll: sources.
+	group loadMetadata.
+	self assert: group loadedCount equals: 3.
+	self assert: group architectureComparison labels size equals: 3.
+	self assert: (group architectureComparison architectures allSatisfy: [ :arch | arch numLayers > 0 ]).
+	self assert: (group configDiffKeys includes: 'model_type').
+	self assert: group sharedTensorNames size < 5.
+	^ group
+]
+
 { #category : 'examples-live' }
 GcHuggingFaceExamples >> liveSafetensorsHeader [
 	"Fetch only the safetensors header via HTTP Range and materialize real GcTensorRefs -- no weights downloaded."
