@@ -173,6 +173,15 @@ GcTensorRef >> hasStats [
 ]
 
 { #category : 'sampling' }
+GcTensorRef >> innerSize [
+	"Elements per leading-dimension row: the product of all dimensions except the first (the contiguous inner block of a row-major tensor). For a 2-D vocab x hidden embedding this is the hidden size."
+	| dims |
+	dims := self dimensions.
+	dims size <= 1 ifTrue: [ ^ self elementCount ].
+	^ dims allButFirst inject: 1 into: [ :p :d | p * d ]
+]
+
+{ #category : 'sampling' }
 GcTensorRef >> isFullySampled [
 	^ self paramCount <= self class sampleElementCap
 ]
@@ -215,6 +224,22 @@ GcTensorRef >> printOn: aStream [
 ]
 
 { #category : 'sampling' }
+GcTensorRef >> rowBandSliceFrom: startRow count: nRows [
+	"Fetch+decode a contiguous band of nRows rows starting at startRow (0-based) as ONE flat GcTensorSlice -- a single ranged read for the whole band. Callers reshape into rows of innerSize."
+	| inner |
+	inner := self innerSize.
+	^ self sliceFromElement: startRow * inner count: nRows * inner
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> rowSliceAt: aRowIndex [
+	"Fetch+decode row aRowIndex (0-based) of this row-major tensor as a GcTensorSlice -- one ranged read of innerSize elements."
+	| inner |
+	inner := self innerSize.
+	^ self sliceFromElement: aRowIndex * inner count: inner
+]
+
+{ #category : 'sampling' }
 GcTensorRef >> sampleElementCount [
 	^ self paramCount min: self class sampleElementCap
 ]
@@ -253,6 +278,24 @@ GcTensorRef >> shape: aShapeOrArray [
 		ifFalse: [ (aShapeOrArray isKindOf: GcTensorShape)
 			ifTrue: [ aShapeOrArray ]
 			ifFalse: [ GcTensorShape fromArray: aShapeOrArray ] ]
+]
+
+{ #category : 'sampling' }
+GcTensorRef >> sliceFromElement: startElement count: aCount [
+	"Fetch (via the file's bytes port) and decode a contiguous element range [startElement, startElement+aCount) of this tensor -- e.g. one embedding row, since rows of a 2-D row-major safetensors tensor are contiguous. ONE ranged read. Absolute range = file dataOffset + this tensor's begin offset + startElement*byteWidth."
+	| width absStart absEnd bytes decoder decoded full |
+	self supportsSampling ifFalse: [ ^ self error: 'Sampling not supported for dtype ', dtype printString ].
+	file ifNil: [ ^ self error: 'Tensor has no owning file' ].
+	(startElement >= 0 and: [ aCount > 0 and: [ startElement + aCount <= self elementCount ] ])
+		ifFalse: [ ^ self error: 'Element range out of bounds' ].
+	width := self dtypeByteWidth.
+	absStart := file byteDataOffset + beginOffset + (startElement * width).
+	absEnd := absStart + (aCount * width) - 1.
+	bytes := file bytesFrom: absStart to: absEnd.
+	decoder := GcDtypeDecoder forDtype: dtype.
+	decoded := decoder decodeBytes: bytes.
+	full := startElement = 0 and: [ aCount = self elementCount ].
+	^ GcTensorSlice tensorRef: self elementStart: startElement values: decoded isFull: full
 ]
 
 { #category : 'sampling' }

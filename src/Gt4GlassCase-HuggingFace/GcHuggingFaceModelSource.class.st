@@ -8,7 +8,8 @@ Class {
 		'client',
 		'repositoryId',
 		'cachedConfig',
-		'cachedFile'
+		'cachedFile',
+		'cachedUndertrainedScan'
 	],
 	#category : 'Gt4GlassCase-HuggingFace',
 	#package : 'Gt4GlassCase-HuggingFace'
@@ -57,6 +58,14 @@ GcHuggingFaceModelSource >> config [
 { #category : 'fetching' }
 GcHuggingFaceModelSource >> configFor: aRepoId [
 	^ GcModelConfig fromDictionary: (client config: aRepoId)
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> embeddingTensorIn: aFile [
+	"The 2-D token-embedding tensor (vocab x hidden) of this model's safetensors file."
+	^ aFile tensors
+		detect: [ :t | self isEmbeddingTensorName: t name ]
+		ifNone: [ self error: 'No token-embedding tensor found in ', aFile path ]
 ]
 
 { #category : 'convenience' }
@@ -137,6 +146,21 @@ GcHuggingFaceModelSource >> gtOddTokensActionFor: anAction [
 				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
+{ #category : 'gt actions' }
+GcHuggingFaceModelSource >> gtScanUndertrainedActionFor: anAction [
+	<gtAction>
+	^ anAction button
+		tooltip: 'Fetch vocab + a control band + the anomalous tokens'' embedding rows over bounded HTTP, then scan for undertrained tokens';
+		priority: 26;
+		icon: BrGlamorousVectorIcons inspect;
+		action: [ :aButton |
+			[ | scan |
+			scan := self scanUndertrainedTokens.
+			aButton enqueueTask: (BlTaskAction new action: [
+				aButton phlow spawnObject: scan ]) ]
+				asAsyncFuture awaitWithUserBackgroundPriority ]
+]
+
 { #category : 'gt views' }
 GcHuggingFaceModelSource >> gtSignalFlowFor: aView [
 	"The model's signal-flow / block diagram. Fetches config.json + the safetensors header the first time this tab is opened (then cached), then derives the block wiring from the tensor names."
@@ -183,6 +207,18 @@ GcHuggingFaceModelSource >> gtTreeFor: aView [
 		view: #gtTreeFor:
 ]
 
+{ #category : 'gt views' }
+GcHuggingFaceModelSource >> gtUndertrainedTokensFor: aView [
+	<gtView>
+	"Undertrained? -- the embedding-weight refinement of the Odd-tokens lens. Reads the cached scan only; run the 'Scan undertrained tokens' action (or an example) to populate it."
+	cachedUndertrainedScan ifNil: [ ^ aView empty ].
+	^ aView forward
+		title: 'Undertrained?';
+		priority: 9;
+		object: [ cachedUndertrainedScan ];
+		view: #gtRankedCandidatesFor:
+]
+
 { #category : 'initialization' }
 GcHuggingFaceModelSource >> initialize [
 	super initialize.
@@ -196,6 +232,15 @@ GcHuggingFaceModelSource >> injectTokenIfPresent [
 	| ref |
 	ref := FileLocator home / '.secrets' / 'huggingface-token.txt'.
 	ref exists ifTrue: [ client token: ref contents trimmed ]
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> isEmbeddingTensorName: aName [
+	"Common token-embedding tensor names across architectures (gpt2 wte, llama/qwen embed_tokens, gpt-neox word_embeddings, ...)."
+	^ aName = 'wte.weight'
+		or: [ (aName endsWith: 'embed_tokens.weight')
+		or: [ (aName endsWith: 'word_embeddings.weight')
+		or: [ aName endsWith: 'tok_embeddings.weight' ] ] ]
 ]
 
 { #category : 'accessing' }
@@ -221,6 +266,12 @@ GcHuggingFaceModelSource >> loadedConfig [
 GcHuggingFaceModelSource >> loadedSafetensorsFile [
 	"The cached safetensors file, if the header was already fetched -- no network (I5)."
 	^ cachedFile
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> loadedUndertrainedScan [
+	"The cached undertrained scan, if already computed -- no network (I5)."
+	^ cachedUndertrainedScan
 ]
 
 { #category : 'convenience' }
@@ -284,6 +335,16 @@ GcHuggingFaceModelSource >> safetensorsFileFor: aRepoId file: aFileName [
 	^ file
 ]
 
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> scanUndertrainedTokens [
+	"Bounded live convenience scan: take the metadata-anomalous tokens (the 'Odd tokens' lens, capped) as candidates and add embedding-weight evidence. Fetches tokenizer.json + vocab.json + a 256-row control band + one row per candidate. NOT called from any render block."
+	| group candidateIds |
+	group := self tokenGroup.
+	candidateIds := (group anomalousTokens collect: [ :t | t tokenId ]) asArray.
+	candidateIds := candidateIds first: (candidateIds size min: 48).
+	^ self undertrainedScanForCandidateIds: candidateIds controlBandStart: 0 controlBandSize: 256
+]
+
 { #category : 'views' }
 GcHuggingFaceModelSource >> sourceFacets [
 	^ {
@@ -313,4 +374,41 @@ GcHuggingFaceModelSource >> tokenGroup [
 	merges := model at: 'merges' ifAbsent: [ #() ].
 	specials := (dict at: 'added_tokens' ifAbsent: [ #() ]) collect: [ :t | t at: 'content' ifAbsent: [ '' ] ].
 	^ GcTokenGroup fromVocabulary: vocab merges: merges specialTokens: specials
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> undertrainedScanForCandidateIds: idColl controlBandStart: aStart controlBandSize: aCount [
+	"Build (and cache) a GcUndertrainedScan over this model's embedding tensor: fetch vocab.json + one control band of aCount rows + one row per candidate id (I5: bounded ranged reads, never the whole matrix), scoring embedding-norm evidence. NOT called from any render block -- driven by an example or the <gtAction>."
+	| file emb lmHead vocab scan |
+	file := self safetensorsFile.
+	emb := self embeddingTensorIn: file.
+	lmHead := self unembeddingTensorIn: file.
+	vocab := self vocabIdToText.
+	scan := GcUndertrainedScan
+		embeddingRef: emb
+		unembeddingRef: lmHead
+		vocab: vocab
+		controlBandStart: aStart
+		controlBandSize: aCount
+		candidateIds: idColl.
+	cachedUndertrainedScan := scan.
+	^ scan
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> unembeddingTensorIn: aFile [
+	"The output projection (lm_head) tensor, or nil when input/output embeddings are TIED (no separate tensor -- e.g. gpt2, SmolLM2). Tied is the signal that unembedding norm equals embedding norm."
+	^ aFile tensors
+		detect: [ :t | t name = 'lm_head.weight' or: [ t name endsWith: '.lm_head.weight' ] ]
+		ifNone: [ nil ]
+]
+
+{ #category : 'undertrained tokens' }
+GcHuggingFaceModelSource >> vocabIdToText [
+	"id -> token string, from vocab.json (token-string -> id), inverted. One JSON fetch (prefer vocab.json; smaller than tokenizer.json). NOT called from any render block."
+	| raw inverted |
+	raw := client getJson: (client resolveUrlFor: repositoryId file: 'vocab.json').
+	inverted := Dictionary new.
+	raw keysAndValuesDo: [ :tokenString :id | inverted at: id put: tokenString ].
+	^ inverted
 ]

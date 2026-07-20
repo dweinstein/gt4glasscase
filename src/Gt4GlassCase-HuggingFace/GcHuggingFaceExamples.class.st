@@ -59,6 +59,42 @@ GcHuggingFaceExamples >> liveGpt2SignalFlowDetectsFusedAttention [
 	^ source
 ]
 
+{ #category : 'examples - undertrained tokens' }
+GcHuggingFaceExamples >> liveGpt2UndertrainedGlitchTokens [
+	"End to end on REAL gpt2: fetch vocab.json + ONE 256-row control band + one embedding row per documented SolidGoldMagikarp-family glitch token, score them, and record the empirical result. Bounded ranged reads only (I5): vocab.json + ~0.8MB band + a few KB of rows.
+
+	HONEST FINDING (2026-07, this run): against a naive ids-0-255 control band with a BAND-LOCAL centroid approximation, the documented glitch family does NOT separate as low-norm / near-centroid. Their median embedding L2 norm (~4.06) sits ABOVE the control-band median (~3.44), and their median suspicion score is low (~0.13). Real per-token norms: SolidGoldMagikarp 3.98, petertodd 4.01, TheNitromeFan 4.06, GoldMagikarp 4.56, EStream 5.15; control-band norm median 3.44 (min 2.69, max 5.34).
+	The published 'tokens nearest the embedding centroid' result is a full-vocab-centroid statement; a 256-row band-local mean is too biased to reproduce it -- which is exactly why the detector labels its centroid an approximation (centroidBasisLabel). A representative / full-vocab centroid basis is follow-up work (DW-18+). This example proves the pipeline on real weights and asserts the negative result rather than a separation that is not there."
+	<gtExample>
+	<noTest>
+	| source glitchIds scan median glitchMedianNorm controlMedianNorm glitchMedianScore magikarp |
+	source := GcHuggingFaceModelSource forRepository: 'openai-community/gpt2'.
+	glitchIds := #(43453 37444 39906 42090 42202).
+	scan := source undertrainedScanForCandidateIds: glitchIds controlBandStart: 0 controlBandSize: 256.
+	"structural facts on real data"
+	self assert: scan tied.
+	self assert: scan embeddingRef name equals: 'wte.weight'.
+	self assert: scan embeddingRef dtype equals: #f32.
+	self assert: scan candidates size equals: 5.
+	self assert: scan controlBandSize equals: 256.
+	"id -> text decoding matches the real tokenizer (byte-level-BPE space renders as U+0120)"
+	magikarp := scan candidates detect: [ :ut | ut tokenId = 43453 ].
+	self assert: (magikarp text includesSubstring: 'SolidGoldMagikarp').
+	"machinery runs on real weights: every candidate scored, finite, in [0,1]"
+	self assert: (scan candidates allSatisfy: [ :ut | ut embeddingNorm isFinite and: [ ut score between: 0 and: 1 ] ]).
+	"HONEST empirical result: NO low-norm / near-centroid separation vs an ids-0-255 band-local centroid"
+	median := [ :coll | | s | s := coll asSortedCollection asArray. s at: (s size + 1) // 2 ].
+	glitchMedianNorm := median value: (scan candidates collect: [ :ut | ut embeddingNorm ]).
+	controlMedianNorm := median value: scan controlNorms.
+	glitchMedianScore := median value: (scan candidates collect: [ :ut | ut score ]).
+	self assert: glitchMedianNorm > controlMedianNorm.
+	self assert: glitchMedianScore < (1 / 2).
+	"views render on real data"
+	self assert: (scan scatterElement isKindOf: BlElement).
+	self assert: scan scatterElement children notEmpty.
+	^ scan
+]
+
 { #category : 'examples-live' }
 GcHuggingFaceExamples >> liveLayerConsistency [
 	"Cross-check two independent real sources: the number of distinct transformer layers seen in the safetensors tensor names equals num_hidden_layers from config.json."

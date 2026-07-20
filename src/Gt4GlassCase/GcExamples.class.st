@@ -268,6 +268,18 @@ GcExamples >> dtypeDecoderF32KnownValues [
 	^ decoder
 ]
 
+{ #category : 'fixtures - embeddings' }
+GcExamples >> f32LeBytes: aFloat [
+	"Little-endian IEEE-754 f32 encoding of aFloat as 4 bytes -- the inverse of GcDtypeDecoder>>f32FromU32:, for building synthetic tensor buffers."
+	| w |
+	w := aFloat asIEEE32BitWord.
+	^ ByteArray
+		with: (w bitAnd: 16rFF)
+		with: ((w bitShift: -8) bitAnd: 16rFF)
+		with: ((w bitShift: -16) bitAnd: 16rFF)
+		with: ((w bitShift: -24) bitAnd: 16rFF)
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> fileDigestConfigJson [
 	<gtExample>
@@ -848,6 +860,40 @@ GcExamples >> stubModelSourceB [
 	^ source
 ]
 
+{ #category : 'fixtures - embeddings' }
+GcExamples >> syntheticEmbeddingFileVocab: vocab hidden: hidden plantedIds: plantedIds [
+	"A hermetic synthetic embedding safetensors file: a single vocab x hidden f32 'wte.weight' tensor wired to an in-memory bytes provider, so real tensor bytes decode through the sampling path with no network. Planted ids are the undertrained plants (tiny norm, near the centroid)."
+	| buf header file |
+	buf := ByteArray new.
+	0 to: vocab - 1 do: [ :i |
+		(self syntheticEmbeddingRowVocab: vocab hidden: hidden id: i plantedIds: plantedIds)
+			do: [ :f | buf := buf , (self f32LeBytes: f) ] ].
+	header := Dictionary new.
+	header at: 'wte.weight' put: (Dictionary new
+		at: 'dtype' put: 'F32';
+		at: 'shape' put: { vocab. hidden };
+		at: 'data_offsets' put: { 0. buf size };
+		yourself).
+	file := GcSafetensorsFile new.
+	file path: 'synthetic/embedding.safetensors'.
+	file parseHeaderDictionary: header.
+	file byteDataOffset: 0.
+	file bytesProvider: (GcInMemoryBytesProvider bytes: buf dataOffset: 0).
+	^ file
+]
+
+{ #category : 'fixtures - embeddings' }
+GcExamples >> syntheticEmbeddingRowVocab: vocab hidden: hidden id: i plantedIds: plantedIds [
+	"Row i of the synthetic embedding: planted ids are near-zero (tiny norm, near the centroid); every other row has unit entries (+/-1 by bit pattern of i) so its L2 norm is exactly sqrt(hidden) and the cloud spreads around a nonzero centroid."
+	| row |
+	(plantedIds includes: i) ifTrue: [
+		row := Array new: hidden withAll: 0.0.
+		row at: 1 put: 0.03125.
+		^ row ].
+	^ (1 to: hidden) collect: [ :j |
+		(i bitAnd: (1 bitShift: (j - 1))) = 0 ifTrue: [ 1.0 ] ifFalse: [ -1.0 ] ]
+]
+
 { #category : 'fixtures' }
 GcExamples >> syntheticGpt2FileNamed: aString layers: nLayers [
 	| file |
@@ -1121,6 +1167,74 @@ GcExamples >> tokenizerSketch [
 	tok := GcTokenizer vocabSize: 151936.
 	self assert: tok vocabSize equals: 151936.
 	^ tok
+]
+
+{ #category : 'examples - undertrained tokens' }
+GcExamples >> undertrainedDetectorRanksPlantedTokens [
+	<gtExample>
+	"The detector ranks exactly the four planted low-norm/near-centroid rows as the top-4 candidates, with exact scoring math on known vectors. Fully hermetic: synthetic 64x8 f32 embedding decoded through the real row-sampling path (in-memory bytes provider), no network."
+	| plantedIds file tensor vocab scan topIds planted normals |
+	plantedIds := #(48 50 52 54).
+	file := self syntheticEmbeddingFileVocab: 64 hidden: 8 plantedIds: plantedIds.
+	tensor := file tensors first.
+	vocab := Dictionary new.
+	0 to: 63 do: [ :i | vocab at: i put: 'tok' , i printString ].
+	vocab at: 48 put: ' SolidGoldMagikarp'.
+	vocab at: 50 put: ' petertodd'.
+	vocab at: 52 put: ' Dragonbound'.
+	vocab at: 54 put: ' TPPStreamerBot'.
+	scan := GcUndertrainedScan
+		embeddingRef: tensor
+		unembeddingRef: nil
+		vocab: vocab
+		controlBandStart: 0
+		controlBandSize: 48
+		candidateIds: #(5 15 25 48 50 52 54).
+	self assert: scan candidates size equals: 7.
+	"the four planted tokens rank top-4"
+	topIds := (scan candidates first: 4) collect: [ :ut | ut tokenId ].
+	self assert: topIds asSortedCollection asArray equals: #(48 50 52 54).
+	planted := scan candidates first: 4.
+	"exact norm on known vectors: planted L2 = 0.03125"
+	self assert: (planted allSatisfy: [ :ut | ut embeddingNorm = 0.03125 ]).
+	"exact score: planted are smaller-normed AND nearer-centroid than every control row, so both percentiles = 1"
+	self assert: (planted allSatisfy: [ :ut | ut normScore = 1 and: [ ut centroidScore = 1 ] ]).
+	self assert: (planted allSatisfy: [ :ut | ut score = 1 ]).
+	"tied output (no lm_head): unembeddingNorm mirrors embeddingNorm"
+	self assert: scan tied.
+	self assert: (planted allSatisfy: [ :ut | ut unembeddingNorm = ut embeddingNorm ]).
+	"normal candidates rank below, with the boring norm sqrt(8)"
+	normals := scan candidates copyFrom: 5 to: 7.
+	self assert: (normals allSatisfy: [ :ut | ut embeddingNorm closeTo: 8 sqrt ]).
+	self assert: (normals allSatisfy: [ :ut | ut score < 1 ]).
+	^ scan
+]
+
+{ #category : 'examples - undertrained tokens' }
+GcExamples >> undertrainedScanViewsRenderAndHandoff [
+	<gtExample>
+	"The scan's scatter and ranked-list views render non-empty over the planted fixture, provenance is honest, and the Phase-5 handoff (lineage-stamped top-N group + GcTrigger mapping) works."
+	| scan element |
+	scan := self undertrainedDetectorRanksPlantedTokens.
+	"scatter: control band (48) + candidates (7) points, renders to a non-empty BlElement"
+	self assert: scan scatterPoints size equals: 55.
+	element := scan scatterElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children notEmpty.
+	"ranked list gtView resolves"
+	self assert: (scan gtRankedCandidatesFor: GtPhlowView empty) notNil.
+	self assert: (scan gtNormScatterFor: GtPhlowView empty) notNil.
+	self assert: (scan gtProvenanceFor: GtPhlowView empty) notNil.
+	"honest provenance"
+	self assert: scan controlBandSize equals: 48.
+	self assert: (scan provenanceLabel includesSubstring: '48 of 64').
+	"Phase-5 handoff"
+	self assert: (scan topCandidates: 3) size equals: 3.
+	self assert: (scan topCandidates: 3) derivation operation equals: #topCandidates.
+	self assert: scan asTriggerCandidates size equals: 7.
+	self assert: (scan asTriggerCandidates first isKindOf: GcTrigger).
+	self assert: scan asTriggerCandidates first form equals: #token.
+	^ scan
 ]
 
 { #category : 'examples - groups' }
