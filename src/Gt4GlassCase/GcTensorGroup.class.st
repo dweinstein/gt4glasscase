@@ -147,6 +147,17 @@ GcTensorGroup >> gtShapeTableFor: aView [
 		send: [ :s | s tensor ]
 ]
 
+{ #category : 'gt views' }
+GcTensorGroup >> gtSignalFlowFor: aView [
+	"What shape of computation do these tensor names describe? A block / signal-flow diagram with the residual bypass edges, derived from the per-layer module wiring."
+	<gtView>
+	^ aView forward
+		title: 'Signal flow';
+		priority: 2;
+		object: [ GcSignalFlow fromTensorGroup: self ];
+		view: #gtSignalFlowFor:
+]
+
 { #category : 'gt - views' }
 GcTensorGroup >> gtSkylineFor: aView [
 	"Does this model's structure deviate from its own internal regularity? One row per depth (embeddings band, transformer layers by index, head/final band); each tensor is a box sized by sqrt(byte size) and coloured by the |z| of its metric within its (module,role) cohort. A normal transformer is boringly uniform, so anything hot or oddly sized breaks the texture at a glance. Click a box to inspect the tensor, a row to open the layer. Colour needs sampled values: use the warm-up action, otherwise everything reads grey (structural only)."

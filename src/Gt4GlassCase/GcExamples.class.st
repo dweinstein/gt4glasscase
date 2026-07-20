@@ -699,6 +699,69 @@ GcExamples >> safetensorsTightFileHasNoSlack [
 	^ file
 ]
 
+{ #category : 'examples - signal flow' }
+GcExamples >> signalFlowFromArchitectureIsInferredCanonical [
+	"With only a config-derived GcArchitecture (no tensor names), the fallback draws the canonical llama-style wiring, marked inferred, with the GQA head split annotated from the config."
+	<gtExample>
+	| arch flow labels m |
+	arch := GcArchitecture new numLayers: 4; numHeads: 9; kvHeads: 3; hiddenSize: 576; yourself.
+	flow := GcSignalFlow fromArchitecture: arch.
+	labels := flow nodeLabels.
+	self assert: flow isInferred.
+	self assert: (flow styleLabel includesSubstring: 'inferred').
+	self assert: (flow attentionHeadNote includesSubstring: 'GQA').
+	#('embed_tokens' 'input_layernorm' 'q_proj' 'o_proj' 'gate_proj' 'down_proj' 'lm_head')
+		do: [ :each | self assert: (labels includes: each) ].
+	self assert: flow residualEdgeCount equals: 2.
+	m := GtMondrian new.
+	flow paintSignalFlowOn: m.
+	self assert: m root children notEmpty.
+	^ flow
+]
+
+{ #category : 'examples - signal flow' }
+GcExamples >> signalFlowFromGpt2FileShowsFusedAttention [
+	"A GPT-2-style synthetic checkpoint (fused attn.c_attn, 2-proj MLP, tied output) -> signal-flow diagram: assert the FUSED attention node (c_attn) is present, that there is no split q_proj node, that the MLP is 2-proj, and that tied embeddings are detected."
+	<gtExample>
+	| file flow labels m |
+	file := self syntheticGpt2FileNamed: 'synthetic-signalflow-gpt2-4L' layers: 4.
+	flow := GcSignalFlow fromTensorGroup: file tensorGroup.
+	labels := flow nodeLabels.
+	self assert: flow attentionFused.
+	self assert: flow mlpGated not.
+	self assert: flow modelStyleName equals: 'gpt2-style'.
+	self assert: (labels includes: 'c_attn').
+	self assert: (labels includes: 'q_proj') not.
+	self assert: (labels includes: 'c_fc').
+	self assert: flow isTiedEmbeddings.
+	self assert: flow residualEdgeCount equals: 2.
+	m := GtMondrian new.
+	flow paintSignalFlowOn: m.
+	self assert: m root children notEmpty.
+	^ flow
+]
+
+{ #category : 'examples - signal flow' }
+GcExamples >> signalFlowFromLlamaFileRendersBlocks [
+	"A llama-style synthetic checkpoint -> signal-flow diagram: assert the derived block set (embedding, split attention q/k/v/o, gated MLP gate/up/down, both norms, head) and the two residual bypass edges, and that the Mondrian renders non-empty."
+	<gtExample>
+	| file flow labels m |
+	file := self syntheticModelFileNamed: 'synthetic-signalflow-6L' layers: 6 experts: 0.
+	flow := GcSignalFlow fromTensorGroup: file tensorGroup.
+	labels := flow nodeLabels.
+	self assert: flow attentionFused not.
+	self assert: flow mlpGated.
+	self assert: flow modelStyleName equals: 'llama-style'.
+	#('embed_tokens' 'input_layernorm' 'q_proj' 'k_proj' 'v_proj' 'o_proj' 'post_attention_layernorm' 'gate_proj' 'up_proj' 'down_proj' 'lm_head')
+		do: [ :each | self assert: (labels includes: each) ].
+	self assert: (flow nodes anySatisfy: [ :n | n kind = #finalNorm ]).
+	self assert: flow residualEdgeCount equals: 2.
+	m := GtMondrian new.
+	flow paintSignalFlowOn: m.
+	self assert: m root children notEmpty.
+	^ flow
+]
+
 { #category : 'examples - regularity' }
 GcExamples >> skylineBuildsForMoeScaleModelWithinBudget [
 	"Performance acceptance: a 61-layer MoE-scale header (~700+ tensors, generated programmatically) must build the skyline element hermetically in bounded time (< 3 s). Proves the issue's 'renders a 61-layer MoE without lag' claim without any network."
@@ -783,6 +846,52 @@ GcExamples >> stubModelSourceB [
 	self assert: source loadedArchitecture numLayers equals: 3.
 	self assert: source loadedTensorGroup size equals: 30.
 	^ source
+]
+
+{ #category : 'fixtures' }
+GcExamples >> syntheticGpt2FileNamed: aString layers: nLayers [
+	| file |
+	file := GcSafetensorsFile new.
+	file path: aString.
+	file parseHeaderDictionary: (self syntheticGpt2HeaderLayers: nLayers).
+	^ file
+]
+
+{ #category : 'fixtures' }
+GcExamples >> syntheticGpt2HeaderLayers: nLayers [
+	"A plain safetensors header for a synthetic GPT-2-style checkpoint: FUSED attention (attn.c_attn), 2-proj MLP (mlp.c_fc / mlp.c_proj), wte/wpe embeddings, ln_1/ln_2/ln_f norms, and tied output (no lm_head tensor). Exercises the fused-attention branch of the signal-flow derivation with no network."
+	| header hidden offset add |
+	header := Dictionary new.
+	hidden := 64.
+	offset := 0.
+	add := [ :tname :dims | | elems bytes |
+		elems := dims inject: 1 into: [ :p :d | p * d ].
+		bytes := elems * 2.
+		header at: tname put: (Dictionary new
+			at: 'dtype' put: 'BF16';
+			at: 'shape' put: dims asArray;
+			at: 'data_offsets' put: { offset. offset + bytes };
+			yourself).
+		offset := offset + bytes ].
+	add value: 'wte.weight' value: { 32000. hidden }.
+	add value: 'wpe.weight' value: { 1024. hidden }.
+	0 to: nLayers - 1 do: [ :i | | pfx |
+		pfx := 'h.' , i printString , '.'.
+		add value: pfx , 'ln_1.weight' value: { hidden }.
+		add value: pfx , 'ln_1.bias' value: { hidden }.
+		add value: pfx , 'attn.c_attn.weight' value: { hidden. hidden * 3 }.
+		add value: pfx , 'attn.c_attn.bias' value: { hidden * 3 }.
+		add value: pfx , 'attn.c_proj.weight' value: { hidden. hidden }.
+		add value: pfx , 'attn.c_proj.bias' value: { hidden }.
+		add value: pfx , 'ln_2.weight' value: { hidden }.
+		add value: pfx , 'ln_2.bias' value: { hidden }.
+		add value: pfx , 'mlp.c_fc.weight' value: { hidden. hidden * 4 }.
+		add value: pfx , 'mlp.c_fc.bias' value: { hidden * 4 }.
+		add value: pfx , 'mlp.c_proj.weight' value: { hidden * 4. hidden }.
+		add value: pfx , 'mlp.c_proj.bias' value: { hidden } ].
+	add value: 'ln_f.weight' value: { hidden }.
+	add value: 'ln_f.bias' value: { hidden }.
+	^ header
 ]
 
 { #category : 'fixtures' }

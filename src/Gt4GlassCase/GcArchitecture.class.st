@@ -96,6 +96,17 @@ GcArchitecture >> gtOverviewFor: aView [
 		send: [ :assoc | assoc value ]
 ]
 
+{ #category : 'gt views' }
+GcArchitecture >> gtSignalFlowFor: aView [
+	"What shape of computation does this config imply? The canonical block diagram, inferred from config alone (no tensor names)."
+	<gtView>
+	^ aView forward
+		title: 'Signal flow';
+		priority: 2;
+		object: [ GcSignalFlow fromArchitecture: self ];
+		view: #gtSignalFlowFor:
+]
+
 { #category : 'derived' }
 GcArchitecture >> headDim [
 	^ (hiddenSize notNil and: [ numHeads notNil and: [ numHeads > 0 ] ])

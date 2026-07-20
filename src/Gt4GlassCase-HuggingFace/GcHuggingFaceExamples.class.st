@@ -44,6 +44,21 @@ GcHuggingFaceExamples >> liveCrossModelArchitectures [
 	^ results
 ]
 
+{ #category : 'examples - signal flow' }
+GcHuggingFaceExamples >> liveGpt2SignalFlowDetectsFusedAttention [
+	"Load the real gpt2 metadata (config.json + safetensors header, KB-scale) through the adapter and derive the signal-flow wiring. gpt2 is the deliberate fused case: a single fused c_attn projection, no split q_proj. Returns the source so the diagram itself can be rendered."
+	<gtExample>
+	<noTest>
+	| source flow |
+	source := GcHuggingFaceModelSource forRepository: 'openai-community/gpt2'.
+	flow := GcSignalFlow fromTensorGroup: source tensorGroup architecture: source architecture.
+	self assert: flow attentionFused.
+	self assert: flow modelStyleName equals: 'gpt2-style'.
+	self assert: (flow nodeLabels includes: 'q_proj') not.
+	self assert: (flow nodeLabels includes: 'c_attn').
+	^ source
+]
+
 { #category : 'examples-live' }
 GcHuggingFaceExamples >> liveLayerConsistency [
 	"Cross-check two independent real sources: the number of distinct transformer layers seen in the safetensors tensor names equals num_hidden_layers from config.json."

@@ -137,6 +137,17 @@ GcHuggingFaceModelSource >> gtOddTokensActionFor: anAction [
 				asAsyncFuture awaitWithUserBackgroundPriority ]
 ]
 
+{ #category : 'gt views' }
+GcHuggingFaceModelSource >> gtSignalFlowFor: aView [
+	"The model's signal-flow / block diagram. Fetches config.json + the safetensors header the first time this tab is opened (then cached), then derives the block wiring from the tensor names."
+	<gtView>
+	^ aView forward
+		title: 'Signal flow';
+		priority: 2;
+		object: [ GcSignalFlow fromTensorGroup: self tensorGroup architecture: self architecture ];
+		view: #gtSignalFlowFor:
+]
+
 { #category : 'views' }
 GcHuggingFaceModelSource >> gtSkylineFor: aView [
 	"The model skyline. Fetches the safetensors header the first time this tab is opened (then cached)."
