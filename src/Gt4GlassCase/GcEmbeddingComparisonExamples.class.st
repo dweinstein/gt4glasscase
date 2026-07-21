@@ -9,6 +9,55 @@ Class {
 	#tag : 'Embedding'
 }
 
+{ #category : 'private - synthetic' }
+GcEmbeddingComparisonExamples >> alignedParallelMatrix [
+	"Four unit word rows (dim 3) engineered so the two consecutive pair displacements are EXACTLY parallel and equal after unit-normalization: (w1->w2) = (w3->w4) = (-1,1,0). The countries (w1,w3) and capitals (w2,w4) are DISTINCT points and the country-contrast (w1-w3) is non-degenerate, so the aligned projection must yield two horizontal, equal-length arrows. 0.7071067811865476 = sqrt(1/2)."
+	^ { #(1.0 0.0 0.0).
+		#(0.0 1.0 0.0).
+		#(0.5 -0.5 0.7071067811865476).
+		#(-0.5 0.5 0.7071067811865476) }
+]
+
+{ #category : 'examples' }
+GcEmbeddingComparisonExamples >> alignedScattersExample [
+	<gtExample>
+	"Hermetic: gtAlignedScattersFor: projects every model into a SHARED, semantically-anchored, same-scale frame. Proves (1) a model whose pair differences are exactly parallel & equal yields horizontal, equal-length country->capital arrows; (2) a single shared bound R bounds every tile and is 1.1x the global max coordinate; (3) the view element builds one aligned tile per model. No network, no real GPT-2."
+	| parallel proj a1x a1y a2x a2y len1 len2 comparison r maxA maxB element |
+	parallel := GcEmbeddingComparison
+		wordSpecs: self syntheticSpecs
+		models: { self syntheticModelLabel: 'par' matrix: self alignedParallelMatrix }.
+	proj := parallel alignedProjectionFor: parallel models first.
+	self assert: proj size equals: 4.
+	a1x := ((proj at: 2) at: 2) - ((proj at: 1) at: 2).
+	a1y := ((proj at: 2) at: 3) - ((proj at: 1) at: 3).
+	a2x := ((proj at: 4) at: 2) - ((proj at: 3) at: 2).
+	a2y := ((proj at: 4) at: 3) - ((proj at: 3) at: 3).
+	self assert: a1y abs closeTo: 0.0 within: 1.0e-6.
+	self assert: a2y abs closeTo: 0.0 within: 1.0e-6.
+	self assert: a1x > 0.0.
+	self assert: a2x > 0.0.
+	len1 := ((a1x * a1x) + (a1y * a1y)) sqrt.
+	len2 := ((a2x * a2x) + (a2y * a2y)) sqrt.
+	self assert: len1 closeTo: len2 within: 1.0e-6.
+	comparison := GcEmbeddingComparison
+		wordSpecs: self syntheticSpecs
+		models: { self syntheticModelLabel: 'A' matrix: self syntheticMatrixA.
+			self syntheticModelLabel: 'B' matrix: self syntheticMatrixB }.
+	r := comparison alignedSharedBound.
+	self assert: r > 0.0.
+	maxA := self maxAbsCoordOf: (comparison alignedProjectionFor: comparison models first).
+	maxB := self maxAbsCoordOf: (comparison alignedProjectionFor: comparison models second).
+	self assert: maxA <= (r + 1.0e-9).
+	self assert: maxB <= (r + 1.0e-9).
+	self assert: r closeTo: ((maxA max: maxB) * 1.1) within: 1.0e-6.
+	self assert: (comparison gtAlignedScattersFor: GtPhlowView empty) notNil.
+	element := comparison alignedScattersElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children size equals: 2.
+	self assert: (element children allSatisfy: [ :tile | tile isKindOf: BlElement ]).
+	^ comparison
+]
+
 { #category : 'asserting' }
 GcEmbeddingComparisonExamples >> assert: actual closeTo: expected [
 	(actual - expected) abs <= 1.0e-9
@@ -61,6 +110,17 @@ GcEmbeddingComparisonExamples >> localGpt2PrecisionComparisonExample [
 	self assert: (cosF32 - cosInt4) abs > 1.0e-4.
 	self assert: (comparison gtSummaryFor: GtPhlowView empty) notNil.
 	^ comparison
+]
+
+{ #category : 'private - synthetic' }
+GcEmbeddingComparisonExamples >> maxAbsCoordOf: aProjection [
+	"Max |coordinate| over a projection's { word. x. y } points."
+	| m |
+	m := 0.0.
+	aProjection do: [ :pt |
+		m := m max: (pt at: 2) abs.
+		m := m max: (pt at: 3) abs ].
+	^ m
 ]
 
 { #category : 'examples - hermetic' }
