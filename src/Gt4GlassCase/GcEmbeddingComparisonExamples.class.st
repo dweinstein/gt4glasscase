@@ -103,6 +103,25 @@ GcEmbeddingComparisonExamples >> remoteSizeComparisonExample [
 	^ comparison
 ]
 
+{ #category : 'examples' }
+GcEmbeddingComparisonExamples >> scattersOverviewExample [
+	<gtExample>
+	"Hermetic: gtScattersFor: builds a small-multiples element with one scatter tile per model, all at once, with no network and no real GPT-2 file. Two synthetic models -> two tiles."
+	| comparison element |
+	comparison := GcEmbeddingComparison
+		wordSpecs: self syntheticSpecs
+		models: { self syntheticModelLabel: 'A' matrix: self syntheticMatrixA.
+			self syntheticModelLabel: 'B' matrix: self syntheticMatrixB }.
+	self assert: comparison models size equals: 2.
+	self assert: (comparison gtScattersFor: GtPhlowView empty) notNil.
+	element := comparison allScattersElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children size equals: 2.
+	self assert: (element children allSatisfy: [ :tile | tile isKindOf: BlElement ]).
+	self assert: (element children first childrenCount) >= 2.
+	^ comparison
+]
+
 { #category : 'examples - hermetic' }
 GcEmbeddingComparisonExamples >> summaryTableExample [
 	<gtExample>

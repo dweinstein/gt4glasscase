@@ -33,6 +33,17 @@ GcEmbeddingComparison class >> words: aWords models: aModels [
 	^ self new setWords: aWords models: aModels
 ]
 
+{ #category : 'private - scatters' }
+GcEmbeddingComparison >> allScattersElement [
+	"A wrapping flow of fixed-size tiles, one per model, each embedding that model's own scatterElement -- the same small-multiples idiom as GcLayerRecord>>attentionOverviewElement (a BlFlowLayout of captioned tiles)."
+	^ BlElement new
+		layout: BlFlowLayout new;
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+		padding: (BlInsets all: 6);
+		addChildren: (models withIndexCollect: [ :model :idx | self scatterTileForModel: model index: idx ]) asArray;
+		yourself
+]
+
 { #category : 'computing' }
 GcEmbeddingComparison >> computeWordPairDistances [
 	"Every unordered word pair with its per-model { model. cosine. distance. z } measurements."
@@ -64,6 +75,16 @@ GcEmbeddingComparison >> gtModelsFor: aView [
 		column: 'Dim' text: [ :m | m hiddenDim printString ];
 		column: 'Precision' text: [ :m | m precision label ];
 		column: 'Baseline cos' text: [ :m | (m baselineMean printShowingDecimalPlaces: 3) , ' +/- ' , (m baselineStd printShowingDecimalPlaces: 3) ]
+]
+
+{ #category : 'gt views' }
+GcEmbeddingComparison >> gtScattersFor: aView [
+	"Small multiples: EVERY model's 2D PCA word-embedding scatter as a labelled tile, all laid out at once so the planes can be compared side by side without drilling into each model one at a time. Clicking a tile opens that GcEmbeddingModel. Mirrors the small-multiples idiom of GcLayerRecord>>attentionOverviewElement and reuses each model's own scatterElement (no re-plotting)."
+	<gtView>
+	^ aView explicit
+		title: 'Scatters';
+		priority: 7;
+		stencil: [ self allScattersElement ]
 ]
 
 { #category : 'gt - views' }
@@ -101,6 +122,23 @@ GcEmbeddingComparison >> printOn: aStream [
 	aStream print: (models ifNil: [ #() ]) size; nextPutAll: ' models)'
 ]
 
+{ #category : 'private - scatters' }
+GcEmbeddingComparison >> scatterTileForModel: aModel index: anIndex [
+	"One fixed-size small-multiples tile: a self-describing header (model label + first word-pair z-score) above the model's own scatterElement. The tile is sized to hold the scatter (a fixed 460x340 plot) so tiles sit side by side and wrap. Clicking the tile drills into the GcEmbeddingModel."
+	| tile |
+	tile := BlElement new
+		layout: BlLinearLayout vertical;
+		size: 500 @ 420;
+		border: (BlBorder paint: (Color gray alpha: 0.3) width: 1);
+		margin: (BlInsets all: 4);
+		padding: (BlInsets all: 4);
+		addChild: (self tileHeaderForModel: aModel index: anIndex);
+		addChild: aModel scatterElement;
+		yourself.
+	tile when: BlClickEvent do: [ :e | e currentTarget phlow spawnObject: aModel ].
+	^ tile
+]
+
 { #category : 'initialization' }
 GcEmbeddingComparison >> setWordSpecs: aSpecs models: aModels [
 	wordSpecsCache := aSpecs.
@@ -117,6 +155,20 @@ GcEmbeddingComparison >> setWords: aWords models: aModels [
 	tokenizer := GcTokenizer gpt2.
 	self prepareModels.
 	self warmUp
+]
+
+{ #category : 'private - scatters' }
+GcEmbeddingComparison >> tileHeaderForModel: aModel index: anIndex [
+	"A one-line caption naming the model and its first word-pair z-score, so each tile is self-describing. Uses the already-cached wordPairDistances (both live examples call wordPairDistances, so no extra computation)."
+	| pairs caption |
+	pairs := self wordPairDistances.
+	caption := pairs isEmpty
+		ifTrue: [ aModel label ]
+		ifFalse: [ aModel label , '   ' , pairs first pairLabel , '  z=' , ((pairs first zForModelIndex: anIndex) printShowingDecimalPlaces: 2) ].
+	^ BlTextElement new
+		text: caption asRopedText;
+		padding: (BlInsets all: 4);
+		yourself
 ]
 
 { #category : 'accessing' }
