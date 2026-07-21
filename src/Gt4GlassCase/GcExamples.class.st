@@ -222,6 +222,80 @@ GcExamples >> completionGroupWithOutcomes [
 	^ group
 ]
 
+{ #category : 'examples - concept axes' }
+GcExamples >> conceptAxisAngleMatrixSymmetricZeroDiagonal [
+	"The inter-axis angle matrix is symmetric with a zero diagonal."
+	<gtExample>
+	| space am n |
+	space := self syntheticConceptAxisSpace.
+	am := space angleMatrix.
+	n := space axes size.
+	1 to: n do: [ :i |
+		self assert: (((am at: i) at: i) abs < 1e-9).
+		1 to: n do: [ :j |
+			self assert: ((((am at: i) at: j) - ((am at: j) at: i)) abs < 1e-9) ] ].
+	^ am
+]
+
+{ #category : 'examples - concept axes' }
+GcExamples >> conceptAxisAnglesOrthogonalParallelAntiparallel [
+	"Two orthogonal axes -> 90 deg; parallel -> 0 deg; anti-parallel -> 180 deg (all +/- 1e-4)."
+	<gtExample>
+	| space model axisX axisY axisPar axisAnti |
+	space := self syntheticConceptAxisSpace.
+	model := space model.
+	axisX := space axes at: 1.
+	axisY := space axes at: 2.
+	axisPar := space axes at: 3.
+	axisAnti := space axes at: 4.
+	self assert: (((axisX angleTo: axisY in: model) - 90.0) abs < 1e-4).
+	self assert: (((axisX angleTo: axisPar in: model) - 0.0) abs < 1e-4).
+	self assert: (((axisX angleTo: axisAnti in: model) - 180.0) abs < 1e-4).
+	^ space
+]
+
+{ #category : 'examples - concept axes' }
+GcExamples >> conceptAxisDirectionIsUnitContrast [
+	"directionIn: is the correct unit(positive centroid - negative centroid): X -> (1,0,0,0), a unit vector."
+	<gtExample>
+	| space model dirX |
+	space := self syntheticConceptAxisSpace.
+	model := space model.
+	dirX := (space axes at: 1) directionIn: model.
+	self assert: (((dirX at: 1) - 1.0) abs < 1e-9).
+	self assert: ((dirX at: 2) abs < 1e-9).
+	self assert: ((dirX at: 3) abs < 1e-9).
+	self assert: ((dirX at: 4) abs < 1e-9).
+	self assert: (((model normArr: dirX) - 1.0) abs < 1e-9).
+	^ dirX
+]
+
+{ #category : 'examples - concept axes' }
+GcExamples >> conceptAxisPlaneBuildsOnePointPerWord [
+	"gtPlaneFor:'s plot builds one clickable dot per placed word (and planePoints agrees)."
+	<gtExample>
+	| space pts el dots |
+	space := self syntheticConceptAxisSpace.
+	pts := space planePointsForAxis1: (space axes at: 1) axis2: (space axes at: 2).
+	self assert: pts size equals: space placedWords size.
+	el := space planeElementForAxis1: (space axes at: 1) axis2: (space axes at: 2).
+	dots := el children select: [ :c | c geometry isKindOf: BlCircleGeometry ].
+	self assert: dots size equals: space placedWords size.
+	^ el
+]
+
+{ #category : 'examples - concept axes' }
+GcExamples >> conceptAxisProjectionEqualsDot [
+	"projectionOf: a word = dot(word, unit direction): w=(3,4,0,0) projects to 3 on X and 4 on Y."
+	<gtExample>
+	| space wv |
+	space := self syntheticConceptAxisSpace.
+	wv := space wordVectorForWord: 'w'.
+	self assert: ((((space axes at: 1) projectionOf: wv) - 3.0) abs < 1e-4).
+	self assert: ((((space axes at: 2) projectionOf: wv) - 4.0) abs < 1e-4).
+	^ wv
+]
+
 { #category : 'examples-hypercube' }
 GcExamples >> coordinateHoldsAxes [
 	<gtExample>
@@ -1372,6 +1446,42 @@ GcExamples >> stubModelSourceB [
 	self assert: source loadedArchitecture numLayers equals: 3.
 	self assert: source loadedTensorGroup size equals: 30.
 	^ source
+]
+
+{ #category : 'examples - concept axes' }
+GcExamples >> syntheticConceptAxisSpace [
+	"A fully synthetic (no network, no gpt2) GcConceptAxisSpace on hand-chosen 4-D vectors: xpos=(1,0,0,0), xneg=(-1,0,0,0), ypos=(0,1,0,0), yneg=(0,-1,0,0), placed word w=(3,4,0,0). Axes X (xpos-xneg), Y (ypos-yneg), Xpar (= X), Xanti (xneg-xpos). Fixture for the Stage-C geometry examples."
+	<gtExample>
+	| rows model specs cxp cxn cyp cyn axisX axisY axisPar axisAnti space |
+	rows := { #(1.0 0.0 0.0 0.0). #(-1.0 0.0 0.0 0.0). #(0.0 1.0 0.0 0.0). #(0.0 -1.0 0.0 0.0). #(3.0 4.0 0.0 0.0) }.
+	model := GcEmbeddingModel new
+		label: 'synthetic';
+		hiddenDim: 4;
+		vocabSize: 8;
+		rowBlock: [ :id | rows at: id ];
+		yourself.
+	specs := {
+		{ 'xp'. #(1). #('xp') }.
+		{ 'xn'. #(2). #('xn') }.
+		{ 'yp'. #(3). #('yp') }.
+		{ 'yn'. #(4). #('yn') }.
+		{ 'w'. #(5). #('w') } }.
+	cxp := GcConcept name: 'xpos' words: #('xp').
+	cxn := GcConcept name: 'xneg' words: #('xn').
+	cyp := GcConcept name: 'ypos' words: #('yp').
+	cyn := GcConcept name: 'yneg' words: #('yn').
+	axisX := GcConceptAxis name: 'X' positive: cxp negative: cxn.
+	axisY := GcConceptAxis name: 'Y' positive: cyp negative: cyn.
+	axisPar := GcConceptAxis name: 'Xpar' positive: cxp negative: cxn.
+	axisAnti := GcConceptAxis name: 'Xanti' positive: cxn negative: cxp.
+	space := GcConceptAxisSpace
+		axes: { axisX. axisY. axisPar. axisAnti }
+		words: #('w' 'xp' 'yp')
+		model: model
+		wordSpecs: specs.
+	self assert: space axes size equals: 4.
+	self assert: space placedWords size equals: 3.
+	^ space
 ]
 
 { #category : 'fixtures - embeddings' }
