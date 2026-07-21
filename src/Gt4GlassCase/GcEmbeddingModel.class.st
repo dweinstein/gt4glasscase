@@ -234,13 +234,13 @@ GcEmbeddingModel >> gtOverviewFor: aView [
 		column: 'Value' text: [ :a | a value ]
 ]
 
-{ #category : 'gt - views' }
+{ #category : 'gt views' }
 GcEmbeddingModel >> gtScatterFor: aView [
 	<gtView>
 	^ aView explicit
 		title: 'Scatter';
 		priority: 14;
-		stencil: [ self scatterElement ]
+		stencil: [ self responsiveScatterElement ]
 ]
 
 { #category : 'gt - views' }
@@ -427,6 +427,81 @@ GcEmbeddingModel >> projectedPoints [
 { #category : 'computing - baseline' }
 GcEmbeddingModel >> randomPairBaseline [
 	^ baselineCache ifNil: [ baselineCache := self computeBaseline ]
+]
+
+{ #category : 'private - views' }
+GcEmbeddingModel >> renderScatterPlotInto: container extent: anExtent [
+	"(Re)build the scatter's pairing lines, dots and labels sized to anExtent; called on each extent change so the plot fills and rescales with the pane."
+	| pts n w h pad xs ys minX maxX minY maxY spanX spanY px py |
+	w := anExtent x. h := anExtent y.
+	(w < 2 or: [ h < 2 ]) ifTrue: [ ^ self ].
+	container removeChildren.
+	pts := self projectedPoints.
+	n := pts size.
+	(n < 1 or: [ hiddenDim < 2 ]) ifTrue: [ ^ self ].
+	pad := 46.
+	xs := pts collect: [ :p | p at: 2 ].
+	ys := pts collect: [ :p | p at: 3 ].
+	minX := xs min. maxX := xs max. minY := ys min. maxY := ys max.
+	spanX := maxX - minX. spanX = 0 ifTrue: [ spanX := 1.0 ].
+	spanY := maxY - minY. spanY = 0 ifTrue: [ spanY := 1.0 ].
+	px := Array new: n. py := Array new: n.
+	1 to: n do: [ :i |
+		px at: i put: pad + (((xs at: i) - minX) / spanX * (w - (2 * pad))).
+		py at: i put: h - pad - (((ys at: i) - minY) / spanY * (h - (2 * pad))) ].
+	n even ifTrue: [
+		1 to: n // 2 do: [ :k |
+			| a b |
+			a := 2 * k - 1. b := 2 * k.
+			container addChild: (self lineFrom: (px at: a) @ (py at: a) to: (px at: b) @ (py at: b) extent: w @ h) ] ].
+	1 to: n do: [ :i |
+		| word dotEl lblEl |
+		word := (pts at: i) at: 1.
+		dotEl := BlElement new
+			geometry: BlCircleGeometry new;
+			size: 11 @ 11;
+			background: (Color r: 0.15 g: 0.4 b: 0.85);
+			position: ((px at: i) - 5.5) @ ((py at: i) - 5.5);
+			yourself.
+		lblEl := BlTextElement new
+			text: (word asRopedText foreground: Color black);
+			position: ((px at: i) + 8) @ ((py at: i) - 8);
+			yourself.
+		container addChild: dotEl.
+		container addChild: lblEl ]
+]
+
+{ #category : 'private - views' }
+GcEmbeddingModel >> responsiveScatterElement [
+	"Like scatterElement but the plot FILLS the pane and rescales with the window; used only by the single-view gtScatterFor:. The fixed-size scatterElement is kept for the small-multiples tiles."
+	| caption |
+	caption := BlTextElement new text: (self scatterCaption asRopedText foreground: Color gray darker).
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		padding: (BlInsets all: 8);
+		addChild: caption;
+		addChild: self responsiveScatterPlotElement;
+		yourself
+]
+
+{ #category : 'private - views' }
+GcEmbeddingModel >> responsiveScatterPlotElement [
+	"A pane-filling (matchParent) version of scatterPlotElement: point pixel positions are recomputed from the container's actual extent on every BlElementExtentChangedEvent so the plot rescales with the window. Kept separate from scatterPlotElement, which the fixed-size small-multiples tiles need."
+	| container |
+	container := BlElement new
+		constraintsDo: [ :c |
+			c horizontal matchParent.
+			c vertical matchParent.
+			c minWidth: 320.
+			c minHeight: 240 ];
+		background: Color white;
+		border: (BlBorder paint: (Color gray alpha: 0.4) width: 1);
+		yourself.
+	self renderScatterPlotInto: container extent: 600 @ 440.
+	container addEventHandlerOn: BlElementExtentChangedEvent
+		do: [ :e | self renderScatterPlotInto: container extent: e currentTarget extent ].
+	^ container
 ]
 
 { #category : 'accessing' }

@@ -235,7 +235,7 @@ GcConceptAxisSpace >> gtPlaneFor: aView [
 	^ aView explicit
 		title: 'Plane';
 		priority: 10;
-		stencil: [ self planeElement ]
+		stencil: [ self responsivePlaneElement ]
 ]
 
 { #category : 'gt views' }
@@ -403,6 +403,91 @@ GcConceptAxisSpace >> printOn: aStream [
 	aStream nextPutAll: self class name.
 	axes ifNil: [ ^ self ].
 	aStream nextPutAll: ' ('; print: axes size; nextPutAll: ' axes, '; print: (placedWords ifNil: [ #() ]) size; nextPutAll: ' words)'
+]
+
+{ #category : 'private - views' }
+GcConceptAxisSpace >> renderPlanePlotInto: container axis1: axis1 axis2: axis2 extent: anExtent [
+	"(Re)build the plane crosshair, one clickable dot+label per placed word and the axis captions sized to anExtent; called on each extent change so the plane fills and rescales with the pane."
+	| pts w h pad xs ys minX maxX minY maxY spanX spanY xOf yOf x0 y0 |
+	w := anExtent x. h := anExtent y.
+	(w < 2 or: [ h < 2 ]) ifTrue: [ ^ self ].
+	container removeChildren.
+	pts := self planePointsForAxis1: axis1 axis2: axis2.
+	pts isEmpty ifTrue: [ ^ self ].
+	pad := 60.
+	xs := pts collect: [ :p | p at: 2 ].
+	ys := pts collect: [ :p | p at: 3 ].
+	minX := (xs copyWith: 0.0) min. maxX := (xs copyWith: 0.0) max.
+	minY := (ys copyWith: 0.0) min. maxY := (ys copyWith: 0.0) max.
+	spanX := maxX - minX. spanX = 0 ifTrue: [ spanX := 1.0 ].
+	spanY := maxY - minY. spanY = 0 ifTrue: [ spanY := 1.0 ].
+	xOf := [ :vx | pad + ((vx - minX) / spanX * (w - (2 * pad))) ].
+	yOf := [ :vy | h - pad - ((vy - minY) / spanY * (h - (2 * pad))) ].
+	x0 := xOf value: 0.0.
+	y0 := yOf value: 0.0.
+	container addChild: (self planeLineFrom: x0 @ pad to: x0 @ (h - pad) extent: w @ h color: (Color gray alpha: 0.35) width: 1).
+	container addChild: (self planeLineFrom: pad @ y0 to: (w - pad) @ y0 extent: w @ h color: (Color gray alpha: 0.35) width: 1).
+	pts do: [ :p |
+		| word cx cy wv dotEl lblEl |
+		word := p at: 1.
+		cx := xOf value: (p at: 2).
+		cy := yOf value: (p at: 3).
+		wv := p at: 4.
+		dotEl := BlElement new
+			geometry: BlCircleGeometry new;
+			size: 10 @ 10;
+			background: (Color r: 0.15 g: 0.4 b: 0.85);
+			position: (cx - 5) @ (cy - 5);
+			yourself.
+		dotEl addEventHandlerOn: BlClickEvent do: [ :e | dotEl phlow spawnObject: wv ].
+		lblEl := BlTextElement new
+			text: (word trimBoth asRopedText foreground: (Color black alpha: 0.8));
+			position: (cx + 6) @ (cy - 8);
+			yourself.
+		container addChild: dotEl.
+		container addChild: lblEl ].
+	container addChild: (BlTextElement new
+		text: ('<-- ' , axis1 negativeLabel , '      x: ' , axis1 name , '      ' , axis1 positiveLabel , ' -->') asRopedText;
+		position: pad @ (h - 26);
+		yourself).
+	container addChild: (BlTextElement new
+		text: ('^ ' , axis2 positiveLabel , '   /   ' , axis2 negativeLabel , ' v   (y: ' , axis2 name , ')') asRopedText;
+		position: 8 @ 8;
+		yourself)
+]
+
+{ #category : 'private - views' }
+GcConceptAxisSpace >> responsivePlaneElement [
+	"Like planeElement but the plane FILLS the pane and rescales with the window. Used only by the single-view gtPlaneFor:; planeElementForAxis1:axis2: stays fixed for its example and other callers."
+	| caption |
+	axes size < 2 ifTrue: [ ^ BlTextElement new text: 'Need at least 2 axes for a plane' asRopedText ].
+	caption := BlTextElement new text: (self planeCaption asRopedText foreground: Color gray darker).
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		padding: (BlInsets all: 8);
+		addChild: caption;
+		addChild: (self responsivePlanePlotElementForAxis1: (axes at: 1) axis2: (axes at: 2));
+		yourself
+]
+
+{ #category : 'private - views' }
+GcConceptAxisSpace >> responsivePlanePlotElementForAxis1: axis1 axis2: axis2 [
+	"A pane-filling (matchParent) version of planeElementForAxis1:axis2:: the crosshair, dots, labels and axis captions are recomputed from the container's actual extent on each BlElementExtentChangedEvent."
+	| container |
+	container := BlElement new
+		constraintsDo: [ :c |
+			c horizontal matchParent.
+			c vertical matchParent.
+			c minWidth: 360.
+			c minHeight: 300 ];
+		background: Color white;
+		border: (BlBorder paint: (Color gray alpha: 0.4) width: 1);
+		yourself.
+	self renderPlanePlotInto: container axis1: axis1 axis2: axis2 extent: 680 @ 520.
+	container addEventHandlerOn: BlElementExtentChangedEvent
+		do: [ :e | self renderPlanePlotInto: container axis1: axis1 axis2: axis2 extent: e currentTarget extent ].
+	^ container
 ]
 
 { #category : 'initialization' }

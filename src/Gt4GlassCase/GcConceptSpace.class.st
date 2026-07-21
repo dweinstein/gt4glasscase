@@ -359,7 +359,7 @@ GcConceptSpace >> gtAtlasFor: aView [
 	^ aView explicit
 		title: 'Atlas';
 		priority: 10;
-		stencil: [ self atlasElement ]
+		stencil: [ self responsiveAtlasElement ]
 ]
 
 { #category : 'gt views' }
@@ -493,10 +493,10 @@ GcConceptSpace >> model [
 	^ model
 ]
 
-{ #category : 'gt - views - support' }
+{ #category : 'gt views - support' }
 GcConceptSpace >> nodeElementForConcept: aConcept [
-	"A graph node for aConcept: a filled circle in the concept's color (diameter grows with intra-concept coherence) captioned with the concept name. The vertical container's model stays the concept, so a click drills into it."
-	| coh dim circle label |
+	"A graph node for aConcept: a filled circle in the concept's color (diameter grows with intra-concept coherence), with the concept name captioned in a small font BELOW the circle so labels stay clear of the circles and of each other. The vertical container's model stays the concept, so a click drills into it."
+	| coh dim circle label labelText |
 	coh := self coherenceFor: aConcept.
 	dim := (26 + (((coh max: 0.0) min: 1.0) * 34)) rounded.
 	circle := BlElement new
@@ -506,8 +506,11 @@ GcConceptSpace >> nodeElementForConcept: aConcept [
 		border: (BlBorder paint: (Color gray alpha: 0.5) width: 1);
 		constraintsDo: [ :c | c linear horizontal alignCenter ];
 		yourself.
+	labelText := aConcept name asRopedText.
+	labelText foreground: Color black.
+	labelText fontSize: 11.
 	label := BlTextElement new
-		text: (aConcept name asRopedText foreground: Color black);
+		text: labelText;
 		constraintsDo: [ :c | c linear horizontal alignCenter ];
 		yourself.
 	^ BlElement new
@@ -518,18 +521,17 @@ GcConceptSpace >> nodeElementForConcept: aConcept [
 		yourself
 ]
 
-{ #category : 'gt - views - support' }
+{ #category : 'gt views' }
 GcConceptSpace >> paintGraphOn: aMondrian [
-	"Paint the concept relationship graph: one node per concept (colored, coherence-sized) and one edge per above-threshold GcConceptPair (width/opacity ~ cosine), with a force layout."
+	"Paint the concept relationship graph: one node per concept (colored, coherence-sized) and one edge per above-threshold GcConceptPair (width/opacity ~ cosine). A circle layout keeps the (few) concept nodes well separated so their captions do not collide."
 	aMondrian nodes
 		stencil: [ :concept | self nodeElementForConcept: concept ];
 		with: self concepts.
 	aMondrian edges
 		stencil: [ :pair | self edgeElementForPair: pair ];
 		connect: self edgePairs from: #first to: #second.
-	aMondrian layout force
-		strength: 0.2;
-		charge: -420
+	aMondrian layout circle
+		radius: (60 + (self concepts size * 26))
 ]
 
 { #category : 'printing' }
@@ -537,6 +539,69 @@ GcConceptSpace >> printOn: aStream [
 	aStream nextPutAll: self class name.
 	concepts ifNil: [ ^ self ].
 	aStream nextPutAll: ' ('; print: concepts size; nextPutAll: ' concepts)'
+]
+
+{ #category : 'private - views' }
+GcConceptSpace >> renderAtlasPlotInto: container extent: anExtent [
+	"(Re)build the atlas centroid rings and word dots sized to anExtent; called on each extent change so the atlas fills and rescales with the pane."
+	| pts n w h pad xs ys minX maxX minY maxY spanX spanY px py |
+	w := anExtent x. h := anExtent y.
+	(w < 2 or: [ h < 2 ]) ifTrue: [ ^ self ].
+	container removeChildren.
+	pts := model projectedPoints.
+	n := pts size.
+	(n < 1 or: [ model hiddenDim < 2 ]) ifTrue: [ ^ self ].
+	pad := 48.
+	xs := pts collect: [ :p | p at: 2 ].
+	ys := pts collect: [ :p | p at: 3 ].
+	minX := xs min. maxX := xs max. minY := ys min. maxY := ys max.
+	spanX := maxX - minX. spanX = 0 ifTrue: [ spanX := 1.0 ].
+	spanY := maxY - minY. spanY = 0 ifTrue: [ spanY := 1.0 ].
+	px := Array new: n.
+	py := Array new: n.
+	1 to: n do: [ :i |
+		px at: i put: pad + (((xs at: i) - minX) / spanX * (w - (2 * pad))).
+		py at: i put: h - pad - (((ys at: i) - minY) / spanY * (h - (2 * pad))) ].
+	self addCentroidRingsTo: container points: pts px: px py: py.
+	self addWordDotsTo: container points: pts px: px py: py
+]
+
+{ #category : 'private - views' }
+GcConceptSpace >> responsiveAtlasElement [
+	"Like atlasElement but the PCA plot FILLS the pane and rescales with the window; the concept legend keeps its natural width beside it. Used only by the single-view gtAtlasFor:; atlasElement/atlasPlotElement stay fixed for the examples and other callers."
+	| caption body |
+	caption := BlTextElement new text: (self atlasCaption asRopedText foreground: Color gray darker).
+	body := BlElement new
+		layout: BlLinearLayout horizontal;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		addChild: self responsiveAtlasPlotElement;
+		addChild: self atlasLegendElement;
+		yourself.
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal matchParent. c vertical matchParent ];
+		padding: (BlInsets all: 8);
+		addChildren: { caption. body };
+		yourself
+]
+
+{ #category : 'private - views' }
+GcConceptSpace >> responsiveAtlasPlotElement [
+	"A pane-filling (matchParent) version of atlasPlotElement: point positions are recomputed from the container's actual extent on each BlElementExtentChangedEvent so the atlas rescales with the window. Reuses addCentroidRingsTo:points:px:py: and addWordDotsTo:points:px:py:."
+	| container |
+	container := BlElement new
+		constraintsDo: [ :c |
+			c horizontal matchParent.
+			c vertical matchParent.
+			c minWidth: 340.
+			c minHeight: 260 ];
+		background: Color white;
+		border: (BlBorder paint: (Color gray alpha: 0.4) width: 1);
+		yourself.
+	self renderAtlasPlotInto: container extent: 640 @ 460.
+	container addEventHandlerOn: BlElementExtentChangedEvent
+		do: [ :e | self renderAtlasPlotInto: container extent: e currentTarget extent ].
+	^ container
 ]
 
 { #category : 'initialization' }
