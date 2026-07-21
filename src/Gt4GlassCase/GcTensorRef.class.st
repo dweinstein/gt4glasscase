@@ -32,6 +32,12 @@ GcTensorRef class >> sampleElementCap [
 	^ 65536
 ]
 
+{ #category : 'decoding' }
+GcTensorRef >> asFloatArray [
+	"The WHOLE tensor decoded to a row-major Float64Array (this image has no FloatArray; Float64Array is the full-precision typed float array). One ranged read + decode of every element. GPT-2 is F32, decoded losslessly into doubles."
+	^ Float64Array withAll: (self sliceFromElement: 0 count: self elementCount) values
+]
+
 { #category : 'accessing' }
 GcTensorRef >> beginOffset [
 	^ beginOffset
