@@ -277,6 +277,44 @@ GcExamples >> dtypeDecoderF32KnownValues [
 	^ decoder
 ]
 
+{ #category : 'examples - tokenizer' }
+GcExamples >> encodeKnownPromptExample [
+	<gtExample>
+	"The GPT-2 byte-level BPE encoder produces the exact known token ids (no model, no network -- vocab + merges only)."
+	| tok |
+	tok := GcTokenizer gpt2.
+	self assert: (tok encode: 'The capital of France is') equals: #(464 3139 286 4881 318).
+	self assert: (tok encode: 'The') equals: #(464).
+	self assert: (tok encode: ' capital') equals: #(3139).
+	self assert: (tok encode: ' of') equals: #(286).
+	self assert: (tok encode: ' France') equals: #(4881).
+	self assert: (tok encode: ' is') equals: #(318).
+	self assert: (tok encode: ' Paris') equals: #(6342).
+	self assert: (tok encode: ' Berlin') equals: #(11307).
+	self assert: (tok encode: ' the') equals: #(262).
+	^ tok
+]
+
+{ #category : 'examples - tokenizer' }
+GcExamples >> encodingViewRendersExample [
+	<gtExample>
+	"A GcEncoding builds, round-trips, flags its special token, and its teaching token-box view constructs without error."
+	| tok enc element |
+	tok := GcTokenizer gpt2.
+	enc := tok encodingFor: 'Hello, <|endoftext|> world!'.
+	self assert: enc tokens notEmpty.
+	self assert: (enc tokens anySatisfy: [ :t | t isSpecial ]).
+	self assert: (tok decode: enc tokenIds) equals: 'Hello, <|endoftext|> world!'.
+	self assert: enc decodedText equals: enc sourceString.
+	element := enc tokenBoxesElement.
+	self assert: (element isKindOf: BlElement).
+	self assert: element children notEmpty.
+	self assert: element children size equals: enc tokenCount.
+	self assert: (enc gtTokenizedFor: GtPhlowView empty) notNil.
+	self assert: (enc gtTokensFor: GtPhlowView empty) notNil.
+	^ enc
+]
+
 { #category : 'fixtures - embeddings' }
 GcExamples >> f32LeBytes: aFloat [
 	"Little-endian IEEE-754 f32 encoding of aFloat as 4 bytes -- the inverse of GcDtypeDecoder>>f32FromU32:, for building synthetic tensor buffers."
@@ -932,6 +970,34 @@ GcExamples >> revisionWithProvenance [
 	revision provenance: self provenanceQwen3.
 	self assert: revision provenance license equals: 'Apache-2.0'.
 	^ revision
+]
+
+{ #category : 'examples - tokenizer' }
+GcExamples >> roundTripExample [
+	<gtExample>
+	"decode(encode(s)) = s for a diverse battery of >= 50 strings: ascii, leading/trailing spaces, digits, contractions, punctuation, newlines, tabs, unicode and emoji."
+	| tok nl tb strings failures |
+	tok := GcTokenizer gpt2.
+	nl := String with: Character lf.
+	tb := String with: Character tab.
+	strings := {
+		'The capital of France is'. 'Hello, world!'. 'hello'. ' hello'. 'hello '. '   leading'. 'trailing   '.
+		'don''t'. 'I''m'. 'we''ve'. 'they''ll'. 'it''s'. 'he''d'. 'you''re'. 'can''t stop won''t stop'.
+		'1234567890'. 'GPT-2 has 124M parameters.'. 'a1b2c3'. '3.14159'. '$1,000.00'.
+		'line one' , nl , 'line two' , nl , 'line three'.
+		'tab' , tb , 'separated' , tb , 'values'. 'multiple    spaces    here'.
+		'UPPER lower MiXeD'. 'punctuation: !@#$%^&*()_+-=[]{}|;:,.<>?/~`'. ''. ' '. '  '. nl.
+		'café résumé naïve'. 'Ελληνικά'. 'Москва'. '日本語のテキスト'. '한국어'.
+		'emoji 😀 test 🚀 rocket 🎉'. 'mixed 日本 and English 123'.
+		'The quick brown fox jumps over the lazy dog.'.
+		'a'. 'Z'. '  a  b  c  '. 'one two three four five'. 'https://example.com/path?q=1&r=2'.
+		'snake_case and camelCase and kebab-case'. 'C++ and C# and F*'. 'e=mc^2'. 'x'.
+		'   surrounded by spaces   '. 'end.'. '{"key": "value", "n": 42}'.
+		'The year is 2024.'. 'Numbers 1 22 333.'. 'don''t worry, be happy!' }.
+	failures := strings reject: [ :s | (tok decode: (tok encode: s)) = s ].
+	self assert: strings size >= 50.
+	self assert: failures isEmpty.
+	^ strings
 ]
 
 { #category : 'examples - slack space' }
@@ -1725,6 +1791,22 @@ GcExamples >> tokenizerSketch [
 	tok := GcTokenizer vocabSize: 151936.
 	self assert: tok vocabSize equals: 151936.
 	^ tok
+]
+
+{ #category : 'examples - tokenizer' }
+GcExamples >> typeAndGenerateDemoExample [
+	<gtExample>
+	<noTest>
+	"End-to-end teaching demo: type a raw string, encode it to ids, greedily generate a short continuation, decode it, and return the GcGeneration so its token-box view is inspectable. Loads the ~1GB model; unloads the weights at the end."
+	| tok prompt ids generation continuation |
+	tok := GcTokenizer gpt2.
+	prompt := 'The capital of France is Paris. The capital of France is'.
+	ids := tok encode: prompt.
+	generation := GcGpt2Model default generateFromTokenIds: ids maxTokens: 6.
+	continuation := generation generatedText.
+	self assert: (continuation beginsWith: ' Paris').
+	GcGpt2Model default unloadWeights.
+	^ generation
 ]
 
 { #category : 'examples - undertrained tokens' }

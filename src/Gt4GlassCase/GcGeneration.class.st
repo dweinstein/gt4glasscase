@@ -52,6 +52,16 @@ GcGeneration >> gtTextFor: aView [
 		text: [ self decodedText ]
 ]
 
+{ #category : 'gt - views' }
+GcGeneration >> gtTokenBoxesFor: aView [
+	<gtView>
+	"The generation as teaching token boxes: prompt tokens (blue) vs greedily generated tokens (green), special / EOT tokens highlighted; a box click spawns the token object."
+	^ aView explicit
+		title: 'Token boxes';
+		priority: 11;
+		stencil: [ self tokenBoxesElement ]
+]
+
 { #category : 'views' }
 GcGeneration >> gtTokensFor: aView [
 	<gtView>
@@ -112,4 +122,33 @@ GcGeneration >> stepLogits [
 { #category : 'accessing' }
 GcGeneration >> stepLogits: aCollection [
 	stepLogits := aCollection
+]
+
+{ #category : 'displaying' }
+GcGeneration >> tokenBoxesElement [
+	"A wrapping row of teaching token boxes for the whole generation: prompt tokens vs greedily generated tokens in distinct colours, special / EOT tokens highlighted; a box click spawns the GcEncodedToken."
+	| decoder promptSize flow |
+	decoder := GcGpt2Decoder default.
+	promptSize := promptIds size.
+	flow := BrHorizontalFlow new
+		matchParent;
+		padding: (BlInsets all: 10);
+		yourself.
+	self allIds doWithIndex: [ :id :i |
+		| piece isSpecial tok color |
+		piece := (decoder pieceForId: id) ifNil: [ '?' ].
+		isSpecial := (piece beginsWith: '<|') and: [ piece endsWith: '|>' ].
+		tok := GcEncodedToken new
+			index: i;
+			tokenId: id;
+			piece: piece;
+			special: isSpecial;
+			yourself.
+		color := isSpecial
+			ifTrue: [ GcEncodedToken specialColor ]
+			ifFalse: [ i <= promptSize
+				ifTrue: [ GcEncodedToken promptColor ]
+				ifFalse: [ GcEncodedToken generatedColor ] ].
+		flow addChild: (tok boxElementBackground: color) ].
+	^ flow
 ]
