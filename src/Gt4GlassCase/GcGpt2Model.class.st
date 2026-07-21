@@ -17,7 +17,8 @@ Class {
 		'vocabSize',
 		'headDim',
 		'eps',
-		'precision'
+		'precision',
+		'weightDtype'
 	],
 	#classVars : [
 		'DefaultModel'
@@ -292,11 +293,14 @@ GcGpt2Model >> decodeToken: tokenId cache: aCache [
 
 { #category : 'weights' }
 GcGpt2Model >> decodeWeight: aName [
-	"Decode the named tensor losslessly to a Float64Array, then apply the current precision (identity for #f32). Per-row integer scaling needs the tensor's dimensions, so read them from the ref."
-	| ref f64 |
+	"Decode the named tensor losslessly to a Float64Array, apply the current precision (identity for #f32-exact), then STORE at the configured weightDtype: #f32 narrows to a Float32Array (half the resident memory; values still compute in doubles because Float32Array>>at: widens on read), #f64 (default) keeps the exact Float64Array baseline. Per-row integer scaling needs the tensor's dimensions, so read them from the ref."
+	| ref f64 decoded |
 	ref := self tensorNamed: aName.
 	f64 := ref asFloatArray.
-	^ self precision apply: f64 dimensions: ref dimensions
+	decoded := self precision apply: f64 dimensions: ref dimensions.
+	^ self weightDtype = #f32
+		ifTrue: [ Float32Array withAll: decoded ]
+		ifFalse: [ decoded ]
 ]
 
 { #category : 'accessing' }
@@ -600,4 +604,17 @@ GcGpt2Model >> weight: aName [
 { #category : 'accessing' }
 GcGpt2Model >> weightCache [
 	^ weightCache ifNil: [ weightCache := Dictionary new ]
+]
+
+{ #category : 'accessing' }
+GcGpt2Model >> weightDtype [
+	"The STORAGE dtype for decoded weight arrays: #f64 (the default -- Float64Array, the exact baseline) or #f32 (Float32Array, HALF the resident memory: 4 bytes/param vs 8). Orthogonal to #precision, which simulates reduced-precision VALUES but always stores Float64Array. nil resolves to #f64."
+	^ weightDtype ifNil: [ #f64 ]
+]
+
+{ #category : 'accessing' }
+GcGpt2Model >> weightDtype: aSymbol [
+	"Set the weight STORAGE dtype (#f64 = Float64Array baseline, #f32 = Float32Array = half memory) and INVALIDATE the decoded-weight cache so every weight re-decodes at the new dtype on next use. NEVER call this on the shared GcGpt2Model default -- run #f32 on a FRESH openDefault model so the memoized default stays clean #f64."
+	weightDtype := aSymbol.
+	self unloadWeights
 ]

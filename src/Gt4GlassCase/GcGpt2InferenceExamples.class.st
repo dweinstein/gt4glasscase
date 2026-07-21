@@ -183,6 +183,43 @@ GcGpt2InferenceExamples >> inContextGreedyParisExample [
 	^ result
 ]
 
+{ #category : 'examples - end to end' }
+GcGpt2InferenceExamples >> inContextGreedyParisF32WeightsExample [
+	<gtExample>
+	<noTest>
+	"END-TO-END proof that the #f32 weight-STORAGE optimization is behavior-preserving AND halves memory. On FRESH models (the shared GcGpt2Model default is left pristine #f64), weights stored as Float32Array still greedily and unambiguously predict ' Paris' (id 6342) for the in-context France prompt -- argmax is stable under f32 storage. Reports the honest resident-memory delta (the f32 weight cache is exactly half the f64 cache) and the forward-time delta (both compute in doubles; #f32 changes only STORAGE, so the times are comparable). Slow: two cold ~124M-param weight decodes -- hence <noTest>."
+	| ids f64model f64ms f64logits f64id f64bytes f32model f32ms f32logits f32id f32bytes result |
+	ids := self franceInContextPromptIds.
+	f64model := GcGpt2Model openDefault.
+	f64ms := [ f64logits := f64model forwardTokenIds: ids ] millisecondsToRun.
+	f64id := GcTensorMath argmax: f64logits.
+	f64bytes := self weightFootprintBytesOf: f64model.
+	f64model unloadWeights.
+	f32model := GcGpt2Model openDefault.
+	f32model weightDtype: #f32.
+	f32ms := [ f32logits := f32model forwardTokenIds: ids ] millisecondsToRun.
+	f32id := GcTensorMath argmax: f32logits.
+	f32bytes := self weightFootprintBytesOf: f32model.
+	f32model unloadWeights.
+	self assert: f64id equals: 6342.
+	self assert: f32id equals: 6342.
+	self assert: (GcGpt2Decoder default decodeId: f32id) equals: ' Paris'.
+	self assertTrue: (f32bytes * 2 - f64bytes) abs <= (f64bytes // 100).
+	result := Dictionary new.
+	result
+		at: #f64GreedyId put: f64id;
+		at: #f32GreedyId put: f32id;
+		at: #f32Decoded put: (GcGpt2Decoder default decodeId: f32id);
+		at: #f64Bytes put: f64bytes;
+		at: #f32Bytes put: f32bytes;
+		at: #f64MB put: (f64bytes / 1048576.0) rounded;
+		at: #f32MB put: (f32bytes / 1048576.0) rounded;
+		at: #memoryRatio put: (f32bytes / f64bytes) asFloat;
+		at: #f64ForwardMs put: f64ms;
+		at: #f32ForwardMs put: f32ms.
+	^ result
+]
+
 { #category : 'examples - kv cache' }
 GcGpt2InferenceExamples >> kvCacheAccumulationExample [
 	<gtExample>
@@ -276,4 +313,14 @@ GcGpt2InferenceExamples >> topKIdsFor: logits k: k [
 	| pairs |
 	pairs := (1 to: logits size) collect: [ :i | (i - 1) -> (logits at: i) ].
 	^ ((pairs asSortedCollection: [ :a :b | a value > b value ]) first: k) collect: [ :a | a key ]
+]
+
+{ #category : 'support' }
+GcGpt2InferenceExamples >> weightFootprintBytesOf: aModel [
+	"Total resident bytes of a model's DECODED weight cache: 4 bytes per element for Float32Array (#f32 storage), 8 for Float64Array (#f64). The honest memory number -- the sum of the actual cached arrays after a forward."
+	| total |
+	total := 0.
+	aModel weightCache valuesDo: [ :arr |
+		total := total + (arr size * ((arr isKindOf: Float32Array) ifTrue: [ 4 ] ifFalse: [ 8 ])) ].
+	^ total
 ]

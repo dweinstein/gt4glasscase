@@ -27,6 +27,58 @@ GcGpt2MathExamples >> assertVector: actual matches: expected within: tol [
 			ifFalse: [ ^ self error: 'element ', i printString, ' expected ', (expected at: i) printString, ' got ', (actual at: i) printString ] ]
 ]
 
+{ #category : 'examples - optimized kernels' }
+GcGpt2MathExamples >> biasGeluFusedMatchesUnfusedExample [
+	<gtExample>
+	"The fused bias-add + gelu_new kernel equals the unfused composition geluNew: (biasAdd: x bias: bias) elementwise, within 1e-9 (in fact bit-identical), on a known input spanning negative, zero and positive values. Correctness gate for the operator-fusion optimization."
+	| x bias fused unfused |
+	x := Float64Array withAll: #(0.5 -1.0 2.0 3.0 -0.25 0.0).
+	bias := Float64Array withAll: #(0.1 0.2 -0.3 0.05 1.0 -0.5).
+	fused := GcTensorMath biasGeluFused: x bias: bias.
+	unfused := GcTensorMath geluNew: (GcTensorMath biasAdd: x bias: bias).
+	self assertVector: fused matches: unfused within: 1.0e-9.
+	^ fused
+]
+
+{ #category : 'examples - optimized kernels' }
+GcGpt2MathExamples >> blockedMatmulBenchmarkExample [
+	<gtExample>
+	"A GcKernelBenchmark comparing the naive vs blocked matmul on a deterministically-seeded 48x48x48 pair. Running it captures both timings (>= 0 ms) and -- the assertion that matters -- proves the results are IDENTICAL (maxDiff 0). The speedup is reported HONESTLY: in this interpreted VM cache tiling is typically a wash (or slightly slower), which is exactly the lesson the object teaches. Inspect the returned object: gtComparison + gtSummary."
+	| m k n aRand bRand bench |
+	m := 48. k := 48. n := 48.
+	aRand := Float64Array new: m * k.
+	1 to: m * k do: [ :i | aRand at: i put: (((i * 2654435761) \\ 10007) / 10007.0) - 0.5 ].
+	bRand := Float64Array new: k * n.
+	1 to: k * n do: [ :i | bRand at: i put: (((i * 40503) \\ 9973) / 9973.0) - 0.5 ].
+	bench := (GcKernelBenchmark
+		operation: 'matmul 48x48x48 (naive vs blocked)'
+		naive: [ GcTensorMath matmulA: aRand rows: m inner: k b: bRand cols: n ]
+		label: 'naive i-k-j (matmulA:)'
+		optimized: [ GcTensorMath matmulBlockedA: aRand rows: m inner: k b: bRand cols: n blockSize: 16 ]
+		label: 'blocked / tiled (bs=16)') run.
+	self assertTrue: bench naiveMs notNil.
+	self assertTrue: bench optimizedMs notNil.
+	self assertTrue: bench isIdentical.
+	self assertTrue: bench maxDiff = 0.0.
+	^ bench
+]
+
+{ #category : 'examples - optimized kernels' }
+GcGpt2MathExamples >> float32StorageRoundTripExample [
+	<gtExample>
+	"Storing a known Float64Array as a Float32Array (the #f32 weight-STORAGE optimization) then reading it back stays within Float32 relative epsilon (~1.2e-7) of the original -- the small, bounded precision cost of halving the weight footprint. Float32Array>>at: widens to a full double on read, so downstream math still runs in doubles."
+	| f64 f32 eps |
+	f64 := Float64Array withAll: #(1.5 2.25 3.1415926535 -7.0 0.1 123456.75).
+	f32 := Float32Array withAll: f64.
+	eps := 1.2e-7.
+	self assertTrue: f32 size = f64 size.
+	1 to: f64 size do: [ :i | | mag rel |
+		mag := (f64 at: i) abs max: 1.0.
+		rel := ((f32 at: i) - (f64 at: i)) abs / mag.
+		self assertTrue: rel <= eps ].
+	^ f32
+]
+
 { #category : 'examples' }
 GcGpt2MathExamples >> geluNewExample [
 	<gtExample>
@@ -126,6 +178,30 @@ GcGpt2MathExamples >> loaderRoundTripExample [
 	self assertVector: localFloats matches: floats within: 1.0e-6.
 	self assertVector: localFloats matches: memFloats within: 1.0e-12.
 	^ memFile
+]
+
+{ #category : 'examples - optimized kernels' }
+GcGpt2MathExamples >> matmulBlockedMatchesNaiveExample [
+	<gtExample>
+	"The blocked/tiled matmul returns results IDENTICAL to the naive i-k-j matmul -- on a known small pair (product exactly #(58 64 139 154)) and on a larger deterministically-seeded pseudo-random pair (Math.random is unavailable, so each element is a fixed function of its index). The tiling preserves the per-output summation order, so it is bit-identical here (maxDiff 0), asserted within 1e-9. Dimensions 17x23x19 with blockSize 8 deliberately exercise RAGGED block boundaries. This is the correctness gate for the blocked-matmul optimization."
+	| a b known blocked m k n aRand bRand naive blk maxDiff |
+	a := Float64Array withAll: #(1.0 2.0 3.0 4.0 5.0 6.0).
+	b := Float64Array withAll: #(7.0 8.0 9.0 10.0 11.0 12.0).
+	known := GcTensorMath matmulA: a rows: 2 inner: 3 b: b cols: 2.
+	blocked := GcTensorMath matmulBlockedA: a rows: 2 inner: 3 b: b cols: 2 blockSize: 2.
+	self assertVector: known matches: #(58.0 64.0 139.0 154.0) within: 1.0e-12.
+	self assertVector: blocked matches: known within: 1.0e-12.
+	m := 17. k := 23. n := 19.
+	aRand := Float64Array new: m * k.
+	1 to: m * k do: [ :i | aRand at: i put: (((i * 2654435761) \\ 10007) / 10007.0) - 0.5 ].
+	bRand := Float64Array new: k * n.
+	1 to: k * n do: [ :i | bRand at: i put: (((i * 40503) \\ 9973) / 9973.0) - 0.5 ].
+	naive := GcTensorMath matmulA: aRand rows: m inner: k b: bRand cols: n.
+	blk := GcTensorMath matmulBlockedA: aRand rows: m inner: k b: bRand cols: n blockSize: 8.
+	maxDiff := 0.0.
+	1 to: naive size do: [ :i | | d | d := ((naive at: i) - (blk at: i)) abs. d > maxDiff ifTrue: [ maxDiff := d ] ].
+	self assertTrue: maxDiff <= 1.0e-9.
+	^ blk
 ]
 
 { #category : 'examples' }

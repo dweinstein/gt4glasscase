@@ -36,6 +36,15 @@ GcTensorMath class >> biasAdd: x bias: bias [
 	^ y
 ]
 
+{ #category : 'kernels - optimized' }
+GcTensorMath class >> biasGeluFused: x bias: bias [
+	"FUSED bias-add + HF gelu_new in a SINGLE pass over x, with NO intermediate array: result[i] = geluNewScalar(x[i] + bias[i]). Numerically IDENTICAL to the unfused composition geluNew: (biasAdd: x bias: bias) -- same scalar applied to the same sum -- but avoids materializing and re-scanning the bias-added intermediate (the operator-fusion win the GPT-2 MLP Conv1D->bias->gelu path benefits from)."
+	| y |
+	y := Float64Array new: x size.
+	1 to: x size do: [ :i | y at: i put: (self geluNewScalar: (x at: i) + (bias at: i)) ].
+	^ y
+]
+
 { #category : 'lookup' }
 GcTensorMath class >> embeddingRowFrom: table dim: d index: rowIndex [
 	"Row rowIndex (0-based) of a [vocab, d] row-major embedding table as a d-length Float64Array."
@@ -102,6 +111,28 @@ GcTensorMath class >> matmulA: a rows: m inner: k b: b cols: n [
 			1 to: n do: [ :j | rowBuf at: j put: (rowBuf at: j) + (aip * (b at: bBase + j)) ] ].
 		cBase := (i - 1) * n.
 		1 to: n do: [ :j | c at: cBase + j put: (rowBuf at: j) ] ].
+	^ c
+]
+
+{ #category : 'kernels - optimized' }
+GcTensorMath class >> matmulBlockedA: a rows: m inner: k b: b cols: n blockSize: bs [
+	"BLOCKED (cache-tiled) C[m,n] = A[m,k] . B[k,n], row-major Float64Array. Same i-k-j accumulation as matmulA:... but iterated over bs-sized tiles of the (i,k,j) index space so an A/B tile loaded into cache is reused across the block; the accumulator IS c (Float64Array new: is 0.0-filled) -- NO inner-loop allocation. For any fixed output C[i,j] the p-contributions are still added in ascending p order (each k-tile is a contiguous ascending range processed to completion before the next), so the summation order -- and thus the result -- is numerically IDENTICAL to matmulA:. The reason BLAS exists: reuse a loaded block. In an interpreted VM the extra tiling overhead may cancel the cache win -- measure it with GcKernelBenchmark."
+	| c iEnd pEnd jEnd aBase bBase cBase aip |
+	c := Float64Array new: m * n.
+	1 to: m by: bs do: [ :ii |
+		iEnd := (ii + bs - 1) min: m.
+		1 to: k by: bs do: [ :kk |
+			pEnd := (kk + bs - 1) min: k.
+			1 to: n by: bs do: [ :jj |
+				jEnd := (jj + bs - 1) min: n.
+				ii to: iEnd do: [ :i |
+					aBase := (i - 1) * k.
+					cBase := (i - 1) * n.
+					kk to: pEnd do: [ :p |
+						aip := a at: aBase + p.
+						bBase := (p - 1) * n.
+						jj to: jEnd do: [ :j |
+							c at: cBase + j put: (c at: cBase + j) + (aip * (b at: bBase + j)) ] ] ] ] ] ].
 	^ c
 ]
 
