@@ -12,7 +12,8 @@ Class {
 		'wordVectorsByWordCache',
 		'conceptForWordCache',
 		'centroidsCache',
-		'cosineMatrixCache'
+		'cosineMatrixCache',
+		'edgeThreshold'
 	],
 	#category : 'Gt4GlassCase-Embedding',
 	#package : 'Gt4GlassCase',
@@ -234,6 +235,29 @@ GcConceptSpace >> centroids [
 		centroidsCache := d ]
 ]
 
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> coherenceFor: aConcept [
+	"Intra-concept coherence: the mean pairwise cosine among aConcept's member word vectors (1.0 for fewer than two members). Higher = tighter cluster; used to size the concept's graph node."
+	| vecs sum count |
+	vecs := aConcept memberVectors.
+	vecs size < 2 ifTrue: [ ^ 1.0 ].
+	sum := 0.0.
+	count := 0.
+	1 to: vecs size - 1 do: [ :i |
+		i + 1 to: vecs size do: [ :j |
+			sum := sum + ((vecs at: i) cosineTo: (vecs at: j)).
+			count := count + 1 ] ].
+	^ sum / count
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> colorForSimilarity: aCosine [
+	"Map a cosine (clamped to [0,1]) to a sequential white -> deep-blue heatmap color: 0 = white, 1 = deep blue."
+	| t |
+	t := ((aCosine max: 0.0) min: 1.0) asFloat.
+	^ Color r: 1.0 - (t * 0.78) g: 1.0 - (t * 0.55) b: 1.0 - (t * 0.12)
+]
+
 { #category : 'accessing' }
 GcConceptSpace >> conceptForWord: aWord [
 	"The (first) concept that lists aWord, or nil."
@@ -268,6 +292,67 @@ GcConceptSpace >> cosineMatrix [
 			concepts collect: [ :b | (self centroidFor: a) cosineTo: (self centroidFor: b) ] ] ]
 ]
 
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> defaultEdgeThreshold [
+	"Mean of the unique off-diagonal (upper-triangle) centroid cosines -- a data-driven cut so the default graph shows the above-average relationships, not a fully connected mesh."
+	| cm n sum count |
+	cm := self cosineMatrix.
+	n := concepts size.
+	n < 2 ifTrue: [ ^ 0.0 ].
+	sum := 0.0.
+	count := 0.
+	1 to: n - 1 do: [ :i |
+		i + 1 to: n do: [ :j |
+			sum := sum + ((cm at: i) at: j).
+			count := count + 1 ] ].
+	^ sum / count
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> edgeElementForPair: aPair [
+	"A graph edge for aPair: a line whose width and opacity grow with the inter-concept cosine (stronger relation = thicker, darker)."
+	| c |
+	c := aPair cosine abs.
+	^ BlLineElement new
+		zIndex: -1;
+		border: (BlBorder
+			paint: ((Color r: 0.2 g: 0.3 b: 0.5) alpha: ((0.3 + (c * 0.6)) min: 0.95))
+			width: 1.0 + (c * 5.0));
+		yourself
+]
+
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> edgePairs [
+	"The relationship-graph edges (GcConceptPairs) at the current edgeThreshold."
+	^ self edgePairsForThreshold: self edgeThreshold
+]
+
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> edgePairsForThreshold: aThreshold [
+	"GcConceptPairs for the upper-triangle concept index pairs (i<j) whose centroid cosine EXCEEDS aThreshold. Undirected: one pair per unordered concept couple."
+	| cm n pairs |
+	cm := self cosineMatrix.
+	n := concepts size.
+	pairs := OrderedCollection new.
+	1 to: n - 1 do: [ :i |
+		i + 1 to: n do: [ :j |
+			((cm at: i) at: j) > aThreshold ifTrue: [
+				pairs add: (GcConceptPair first: (concepts at: i) second: (concepts at: j) in: self) ] ] ].
+	^ pairs
+]
+
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> edgeThreshold [
+	"The inter-concept centroid cosine ABOVE which the relationship graph draws an edge. Lazily defaults to the mean of the off-diagonal cosines so the default graph is legible; set via edgeThreshold: to tune."
+	^ edgeThreshold ifNil: [ self defaultEdgeThreshold ]
+]
+
+{ #category : 'accessing - relationships' }
+GcConceptSpace >> edgeThreshold: aNumberOrNil [
+	"Set the graph edge cutoff (a cosine). Pass nil to fall back to the data-driven default."
+	edgeThreshold := aNumberOrNil
+]
+
 { #category : 'gt views' }
 GcConceptSpace >> gtAtlasFor: aView [
 	<gtView>
@@ -290,6 +375,24 @@ GcConceptSpace >> gtConceptsFor: aView [
 		send: [ :c | c ]
 ]
 
+{ #category : 'gt - views' }
+GcConceptSpace >> gtGraphFor: aView [
+	<gtView>
+	^ aView mondrian
+		title: 'Graph';
+		priority: 12;
+		painting: [ :mondrian | self paintGraphOn: mondrian ]
+]
+
+{ #category : 'gt - views' }
+GcConceptSpace >> gtHeatmapFor: aView [
+	<gtView>
+	^ aView explicit
+		title: 'Heatmap';
+		priority: 14;
+		stencil: [ self heatmapElement ]
+]
+
 { #category : 'gt views' }
 GcConceptSpace >> gtSimilarityFor: aView [
 	<gtView>
@@ -306,9 +409,127 @@ GcConceptSpace >> gtSimilarityFor: aView [
 	^ list
 ]
 
+{ #category : 'gt - views - support' }
+GcConceptSpace >> heatmapCellCount [
+	"The number of cells the heatmap draws: N x N (one per ordered concept pair, diagonal included)."
+	^ concepts size * concepts size
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> heatmapCellElement: aSimilarity pair: aPair width: aWidth height: aHeight [
+	| cell label |
+	cell := BlElement new
+		layout: BlFrameLayout new;
+		constraintsDo: [ :c | c horizontal exact: aWidth. c vertical exact: aHeight ];
+		background: (self colorForSimilarity: aSimilarity);
+		border: (BlBorder paint: Color white width: 1);
+		yourself.
+	cell userData at: #gcHeatmapCell put: aPair.
+	label := BlTextElement new
+		text: ((aSimilarity printShowingDecimalPlaces: 2) asRopedText
+			foreground: (aSimilarity > 0.7 ifTrue: [ Color white ] ifFalse: [ Color black ]));
+		constraintsDo: [ :c | c frame horizontal alignCenter. c frame vertical alignCenter ];
+		yourself.
+	cell addChild: label.
+	cell addEventHandlerOn: BlClickEvent do: [ :e | cell phlow spawnObject: aPair ].
+	^ cell
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> heatmapElement [
+	"An N x N cosine-similarity heatmap: cells colored white->deep-blue by inter-concept centroid cosine (diagonal = 1), rows and columns labeled by concept name in the concept's color. Each cell clicks to its GcConceptPair."
+	| n cellW cellH labelW cm container header |
+	n := concepts size.
+	cellW := 66.
+	cellH := 30.
+	labelW := 96.
+	cm := self cosineMatrix.
+	container := BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+		padding: (BlInsets all: 8);
+		yourself.
+	container addChild: (BlTextElement new
+		text: ('Inter-concept cosine similarity (diagonal = 1)' asRopedText foreground: Color gray darker)).
+	header := BlElement new
+		layout: BlLinearLayout horizontal;
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+		yourself.
+	header addChild: (self heatmapLabelElement: '' color: Color transparent width: labelW).
+	concepts do: [ :c |
+		header addChild: (self heatmapLabelElement: c name color: c color width: cellW) ].
+	container addChild: header.
+	1 to: n do: [ :i |
+		| row rowConcept |
+		rowConcept := concepts at: i.
+		row := BlElement new
+			layout: BlLinearLayout horizontal;
+			constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+			yourself.
+		row addChild: (self heatmapLabelElement: rowConcept name color: rowConcept color width: labelW).
+		1 to: n do: [ :j |
+			| pair |
+			pair := GcConceptPair first: rowConcept second: (concepts at: j) in: self.
+			row addChild: (self
+				heatmapCellElement: ((cm at: i) at: j)
+				pair: pair
+				width: cellW
+				height: cellH) ].
+		container addChild: row ].
+	^ container
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> heatmapLabelElement: aString color: aColor width: aWidth [
+	^ BlTextElement new
+		text: (aString asRopedText foreground: aColor);
+		padding: (BlInsets all: 2);
+		constraintsDo: [ :c | c horizontal exact: aWidth. c vertical fitContent ];
+		yourself
+]
+
 { #category : 'accessing' }
 GcConceptSpace >> model [
 	^ model
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> nodeElementForConcept: aConcept [
+	"A graph node for aConcept: a filled circle in the concept's color (diameter grows with intra-concept coherence) captioned with the concept name. The vertical container's model stays the concept, so a click drills into it."
+	| coh dim circle label |
+	coh := self coherenceFor: aConcept.
+	dim := (26 + (((coh max: 0.0) min: 1.0) * 34)) rounded.
+	circle := BlElement new
+		geometry: BlCircleGeometry new;
+		size: dim @ dim;
+		background: aConcept color;
+		border: (BlBorder paint: (Color gray alpha: 0.5) width: 1);
+		constraintsDo: [ :c | c linear horizontal alignCenter ];
+		yourself.
+	label := BlTextElement new
+		text: (aConcept name asRopedText foreground: Color black);
+		constraintsDo: [ :c | c linear horizontal alignCenter ];
+		yourself.
+	^ BlElement new
+		layout: BlLinearLayout vertical;
+		constraintsDo: [ :c | c horizontal fitContent. c vertical fitContent ];
+		padding: (BlInsets all: 3);
+		addChildren: { circle. label };
+		yourself
+]
+
+{ #category : 'gt - views - support' }
+GcConceptSpace >> paintGraphOn: aMondrian [
+	"Paint the concept relationship graph: one node per concept (colored, coherence-sized) and one edge per above-threshold GcConceptPair (width/opacity ~ cosine), with a force layout."
+	aMondrian nodes
+		stencil: [ :concept | self nodeElementForConcept: concept ];
+		with: self concepts.
+	aMondrian edges
+		stencil: [ :pair | self edgeElementForPair: pair ];
+		connect: self edgePairs from: #first to: #second.
+	aMondrian layout force
+		strength: 0.2;
+		charge: -420
 ]
 
 { #category : 'printing' }

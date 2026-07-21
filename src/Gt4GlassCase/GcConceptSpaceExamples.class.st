@@ -89,6 +89,46 @@ GcConceptSpaceExamples >> syntheticConceptMetricsExample [
 ]
 
 { #category : 'examples' }
+GcConceptSpaceExamples >> syntheticConceptRelationshipsExample [
+	<gtExample>
+	"Stage B: the cosine heatmap element builds with N*N colored cells, and the relationship-graph edge selection is exact on the known 3-concept cosine matrix (AB=0, AC=0.9487, BC=0)."
+	| space n heat cellCount defaultT edgesDefault pair edgesHalf edgesHigh edgesLow m |
+	space := self syntheticConceptSpace.
+	n := space concepts size.
+	heat := space heatmapElement.
+	self assert: (heat isKindOf: BlElement).
+	cellCount := 0.
+	heat allChildrenDepthFirstDo: [ :e |
+		(e userData includesKey: #gcHeatmapCell) ifTrue: [ cellCount := cellCount + 1 ] ].
+	self assert: cellCount equals: n * n.
+	self assert: space heatmapCellCount equals: n * n.
+	self assert: (space gtHeatmapFor: GtPhlowView empty) notNil.
+	defaultT := space defaultEdgeThreshold.
+	self assert: defaultT closeTo: (3.0 / 10.0 sqrt / 3.0) within: 1.0e-5.
+	edgesDefault := space edgePairs.
+	self assert: edgesDefault size equals: 1.
+	pair := edgesDefault first.
+	self assert: pair first == space concepts first.
+	self assert: pair second == space concepts third.
+	self assert: pair cosine closeTo: (3.0 / 10.0 sqrt) within: 1.0e-6.
+	edgesHalf := space edgePairsForThreshold: 0.5.
+	self assert: edgesHalf size equals: 1.
+	edgesHigh := space edgePairsForThreshold: 0.95.
+	self assert: edgesHigh size equals: 0.
+	edgesLow := space edgePairsForThreshold: -0.5.
+	self assert: edgesLow size equals: 3.
+	space concepts do: [ :c |
+		self assert: ((space nodeElementForConcept: c) isKindOf: BlElement) ].
+	edgesDefault do: [ :p |
+		self assert: ((space edgeElementForPair: p) isKindOf: BlLineElement) ].
+	m := GtMondrian new.
+	space paintGraphOn: m.
+	self assert: (m asElement isKindOf: BlElement).
+	self assert: (space gtGraphFor: GtPhlowView empty) notNil.
+	^ space
+]
+
+{ #category : 'examples' }
 GcConceptSpaceExamples >> syntheticConceptSpace [
 	<gtExample>
 	"A synthetic GcConceptSpace over tiny known vectors, reusing the GcEmbeddingComparisonExamples synthetic-model helper (no network, no real gpt2)."
