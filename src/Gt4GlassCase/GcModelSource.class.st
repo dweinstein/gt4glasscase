@@ -4,6 +4,8 @@ PORT (hexagonal architecture): the interface Glass Case depends on to obtain mod
 Class {
 	#name : 'GcModelSource',
 	#superclass : 'Object',
+	#traits : 'TGcModelArchitecture',
+	#classTraits : 'TGcModelArchitecture classTrait',
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
 }
@@ -78,6 +80,18 @@ GcModelSource >> loadedTensorGroup [
 GcModelSource >> manifestFor: aRepoId [
 	"Answer a GcRepoManifest of the repository's files. Adapters implement."
 	^ self subclassResponsibility
+]
+
+{ #category : 'architecture - hooks' }
+GcModelSource >> modelArchitecture [
+	"TGcModelArchitecture hook: the config-derived shape, read from cached state only (no network)."
+	^ self loadedArchitecture
+]
+
+{ #category : 'architecture - hooks' }
+GcModelSource >> modelTensorGroup [
+	"TGcModelArchitecture hook: the safetensors-header tensor group, read from cached state only (no network). Nil until metadata is loaded."
+	^ self loadedTensorGroup
 ]
 
 { #category : 'fetching' }

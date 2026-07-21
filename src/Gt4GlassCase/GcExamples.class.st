@@ -632,6 +632,26 @@ GcExamples >> mixtureSolutionViewShowsResidual [
 	^ solution
 ]
 
+{ #category : 'examples - architecture' }
+GcExamples >> modelArchitectureUnifiedFacetsFromSource [
+	"A model-source answers the unified TGcModelArchitecture facets through the shared trait: config-derived shape (layers / heads / kv-heads / head-dim / hidden / intermediate / vocab) fused with checkpoint-derived params + dtype, entirely from cached state (no network). The compact 'Model' summary view builds."
+	<gtExample>
+	| source |
+	source := self stubModelSourceA.
+	self assert: source numLayers equals: 2.
+	self assert: source numHeads equals: 8.
+	self assert: source numKvHeads equals: 2.
+	self assert: source headDim equals: 8.
+	self assert: source hiddenSize equals: 64.
+	self assert: source intermediateSize equals: 128.
+	self assert: source vocabSize equals: 32000.
+	self assert: source numParameters equals: 4178240.
+	self assert: source modelDtype equals: #bf16.
+	self assert: source architectureFacets size equals: 9.
+	self assert: ((source gtModelFactsFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	^ source
+]
+
 { #category : 'examples-provenance' }
 GcExamples >> modelFamilyQwen3 [
 	<gtExample>

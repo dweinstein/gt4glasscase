@@ -4,6 +4,8 @@ A loaded GPT-2 model: a parsed GcSafetensorsFile plus its GcModelConfig. Decodes
 Class {
 	#name : 'GcGpt2Model',
 	#superclass : 'Object',
+	#traits : 'TGcModelArchitecture',
+	#classTraits : 'TGcModelArchitecture classTrait',
 	#instVars : [
 		'file',
 		'config',
@@ -135,6 +137,12 @@ GcGpt2Model >> applyBlockCached: li to: inHidden seqLen: seqLen scale: scale cac
 	mlpOut := act collect: [ :m | GcTensorMath mmulNoTransposeInput: m inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB ].
 	outHidden := (1 to: seqLen) collect: [ :i | GcTensorMath add: (midHidden at: i) and: (mlpOut at: i) ].
 	^ outHidden
+]
+
+{ #category : 'architecture' }
+GcGpt2Model >> architecture [
+	"The config-derived GcArchitecture (shape only, no tensor names). Cheap -- no weight decode."
+	^ config architecture
 ]
 
 { #category : 'forward pass' }
@@ -357,6 +365,52 @@ GcGpt2Model >> generateFromTokenIds: ids maxTokens: n [
 	^ gen
 ]
 
+{ #category : 'gt views' }
+GcGpt2Model >> gtOverviewFor: aView [
+	"A compact landing page for the running model: navigate to its shape, its structure (as a model source), its tensors, its safetensors file and config. Generation is produced on demand by #generateFromTokenIds:maxTokens: (a GcGeneration); no forward is run here."
+	<gtView>
+	^ aView columnedList
+		title: 'Overview';
+		priority: 1;
+		items: [ self overviewFacets ];
+		column: 'Aspect' text: [ :assoc | assoc key ];
+		column: 'Value' text: [ :assoc | assoc value ifNil: [ '-' ] ifNotNil: [ :v | v displayString ] ];
+		send: [ :assoc | assoc value ]
+]
+
+{ #category : 'gt views' }
+GcGpt2Model >> gtSignalFlowFor: aView [
+	"The block diagram derived from the actual tensor names + config -- forwarded to GcSignalFlow (no re-implementation, no weight decode)."
+	<gtView>
+	^ aView forward
+		title: 'Signal flow';
+		priority: 4;
+		object: [ GcSignalFlow fromTensorGroup: self tensorGroup architecture: self architecture ];
+		view: #gtSignalFlowFor:
+]
+
+{ #category : 'gt views' }
+GcGpt2Model >> gtSkylineFor: aView [
+	"The structural skyline -- forwarded to the safetensors file (reuses GcTensorGroup's painting; no re-implementation)."
+	<gtView>
+	^ aView forward
+		title: 'Skyline';
+		priority: 6;
+		object: [ file ];
+		view: #gtSkylineFor:
+]
+
+{ #category : 'gt views' }
+GcGpt2Model >> gtTreeFor: aView [
+	"The tensor-name hierarchy -- forwarded to the safetensors file's own tree view."
+	<gtView>
+	^ aView forward
+		title: 'Tree';
+		priority: 5;
+		object: [ file ];
+		view: #gtTreeFor:
+]
+
 { #category : 'accessing' }
 GcGpt2Model >> headDim [
 	^ headDim
@@ -380,6 +434,27 @@ GcGpt2Model >> initializeFile: aFile config: aConfig [
 	weightCache := Dictionary new
 ]
 
+{ #category : 'architecture - hooks' }
+GcGpt2Model >> modelArchitecture [
+	"TGcModelArchitecture hook: the running model's config-derived shape."
+	^ self architecture
+]
+
+{ #category : 'architecture' }
+GcGpt2Model >> modelSource [
+	"The running model viewed as a hermetic GcModelSource: an in-memory adapter over the very config + safetensors header it already holds (no transport, no re-fetch). Makes the structural source lens and source comparison available on the running model."
+	^ GcInMemoryModelSource
+		named: (config modelType ifNil: [ 'model' ]) , ' (running)'
+		config: config
+		safetensorsFile: file
+]
+
+{ #category : 'architecture - hooks' }
+GcGpt2Model >> modelTensorGroup [
+	"TGcModelArchitecture hook: the running model's safetensors-header tensor group (no weight decode)."
+	^ self tensorGroup
+]
+
 { #category : 'accessing' }
 GcGpt2Model >> numHeads [
 	^ numHeads
@@ -388,6 +463,19 @@ GcGpt2Model >> numHeads [
 { #category : 'accessing' }
 GcGpt2Model >> numLayers [
 	^ numLayers
+]
+
+{ #category : 'gt views' }
+GcGpt2Model >> overviewFacets [
+	"Navigational landing facets: each rich value drills into a moldable object (shape, structure-as-source, tensors, file, config)."
+	^ {
+		'Model type' -> config modelType.
+		'Parameters' -> self modelTensorGroup totalParams.
+		'Shape' -> self architecture.
+		'Structure (as source)' -> self modelSource.
+		'Tensors' -> self tensorGroup.
+		'Safetensors file' -> file.
+		'Config' -> config }
 ]
 
 { #category : 'forward - kv cache' }
@@ -409,6 +497,12 @@ GcGpt2Model >> prefillTokenIds: ids cache: aCache [
 	lnfW := self weight: 'ln_f.weight'.
 	lnfB := self weight: 'ln_f.bias'.
 	^ GcTensorMath unembedHidden: (GcTensorMath layerNorm: hidden last gamma: lnfW beta: lnfB eps: eps) dim: d table: wte vocab: vocabSize
+]
+
+{ #category : 'architecture' }
+GcGpt2Model >> tensorGroup [
+	"A GcTensorGroup over the already-parsed safetensors header (no weight decode) -- the same structure the model-source side wraps."
+	^ file tensorGroup
 ]
 
 { #category : 'weights' }

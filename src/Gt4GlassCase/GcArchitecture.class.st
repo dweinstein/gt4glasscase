@@ -9,7 +9,9 @@ Class {
 		'numHeads',
 		'kvHeads',
 		'hiddenSize',
-		'moeExperts'
+		'moeExperts',
+		'vocabSize',
+		'intermediateSize'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -22,6 +24,8 @@ GcArchitecture class >> fromConfig: aConfig [
 		numHeads: aConfig numHeads;
 		kvHeads: aConfig kvHeads;
 		hiddenSize: aConfig hiddenSize;
+		vocabSize: aConfig vocabSize;
+		intermediateSize: aConfig intermediateSize;
 		yourself
 ]
 
@@ -125,6 +129,16 @@ GcArchitecture >> hiddenSize: anInteger [
 ]
 
 { #category : 'accessing' }
+GcArchitecture >> intermediateSize [
+	^ intermediateSize
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> intermediateSize: anInteger [
+	intermediateSize := anInteger
+]
+
+{ #category : 'accessing' }
 GcArchitecture >> kvHeads [
 	^ kvHeads
 ]
@@ -199,4 +213,14 @@ GcArchitecture >> printOn: aStream [
 	aStream nextPutAll: 'L x '.
 	aStream print: hiddenSize.
 	aStream nextPutAll: 'd)'
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> vocabSize [
+	^ vocabSize
+]
+
+{ #category : 'accessing' }
+GcArchitecture >> vocabSize: anInteger [
+	vocabSize := anInteger
 ]

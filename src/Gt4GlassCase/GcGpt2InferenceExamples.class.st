@@ -213,6 +213,39 @@ GcGpt2InferenceExamples >> maxAbsDiffBetween: a and: b [
 	^ m
 ]
 
+{ #category : 'examples - architecture' }
+GcGpt2InferenceExamples >> modelArchitectureUnifiedFacetsFromGpt2Model [
+	"The running GPT-2 model answers the unified TGcModelArchitecture facets through the SAME trait as the model-source side, and its structural views (skyline / signal-flow / tree) REUSE the existing structural objects -- all from the local safetensors header + config, WITHOUT decoding weights or running a forward. Deterministic (header shape products), so it joins the automated suite alongside decodeFixturePromptExample."
+	<gtExample>
+	| model flow source |
+	model := GcGpt2Model default.
+	self assert: model numLayers equals: 12.
+	self assert: model numHeads equals: 12.
+	self assert: model numKvHeads equals: 12.
+	self assert: model headDim equals: 64.
+	self assert: model hiddenSize equals: 768.
+	self assert: model vocabSize equals: 50257.
+	self assert: model numParameters equals: 137022720.
+	self assert: model modelDtype equals: #f32.
+	self assertTrue: (model architecture isKindOf: GcArchitecture).
+	self assert: model architecture vocabSize equals: 50257.
+	self assert: model architectureFacets size equals: 9.
+	self assert: model tensorGroup layerIndices size equals: 12.
+	flow := GcSignalFlow fromTensorGroup: model tensorGroup architecture: model architecture.
+	self assertTrue: flow attentionFused.
+	self assert: flow modelStyleName equals: 'gpt2-style'.
+	source := model modelSource.
+	self assertTrue: (source isKindOf: GcInMemoryModelSource).
+	self assertTrue: source isMetadataLoaded.
+	self assert: source loadedArchitecture numLayers equals: 12.
+	self assertTrue: ((model gtOverviewFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	self assertTrue: ((model gtModelFactsFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	self assertTrue: ((model gtSkylineFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	self assertTrue: ((model gtSignalFlowFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	self assertTrue: ((model gtTreeFor: GtPhlowView empty) isKindOf: GtPhlowEmptyView) not.
+	^ model
+]
+
 { #category : 'examples' }
 GcGpt2InferenceExamples >> singleShotCapitalOfFranceExample [
 	<gtExample>
