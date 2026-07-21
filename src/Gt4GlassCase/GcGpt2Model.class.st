@@ -43,7 +43,7 @@ GcGpt2Model class >> openDefault [
 	| dir provider file hdrLenBytes hdrLen hdrBytes hdrString cfg |
 	dir := self cachePath.
 	provider := GcLocalFileBytesProvider forPath: dir / 'model.safetensors'.
-	file := GcSafetensorsFile new bytesProvider: provider; yourself.
+	file := GcSafetensorsFile new bytesProvider: provider; path: provider path pathString; yourself.
 	hdrLenBytes := provider provideBytesFrom: 0 to: 7.
 	hdrLen := 0.
 	0 to: 7 do: [ :i | hdrLen := hdrLen + ((hdrLenBytes at: i + 1) bitShift: 8 * i) ].

@@ -253,14 +253,16 @@ GcSafetensorsFile >> path [
 ]
 
 { #category : 'accessing' }
-GcSafetensorsFile >> path: aString [
-	path := aString
+GcSafetensorsFile >> path: aPathObject [
+	path := aPathObject
 ]
 
 { #category : 'printing' }
 GcSafetensorsFile >> printOn: aStream [
+	| src |
+	src := self sourcePath.
 	aStream nextPutAll: 'GcSafetensorsFile('.
-	aStream nextPutAll: (path ifNil: [ '?' ]).
+	aStream nextPutAll: (src ifNil: [ '?' ] ifNotNil: [ :p | p asFileReference basename ]).
 	aStream nextPutAll: ', '.
 	aStream print: self tensorCount.
 	aStream nextPutAll: ' tensors)'
@@ -291,6 +293,14 @@ GcSafetensorsFile >> slackRanges [
 GcSafetensorsFile >> sortedTensorExtents [
 	^ (((tensors ifNil: [ #() ]) select: [ :each | each beginOffset notNil and: [ each endOffset notNil ] ])
 		asSortedCollection: [ :a :b | a beginOffset <= b beginOffset ]) asArray
+]
+
+{ #category : 'accessing' }
+GcSafetensorsFile >> sourcePath [
+	"The file's identifying path: the explicitly-set path if any, else derived from the bytes provider (single source of truth). May be a FileReference, a String, or nil (e.g. an in-memory provider)."
+	^ path ifNil: [ (bytesProvider notNil and: [ bytesProvider respondsTo: #path ])
+		ifTrue: [ bytesProvider path ]
+		ifFalse: [ nil ] ]
 ]
 
 { #category : 'views' }
