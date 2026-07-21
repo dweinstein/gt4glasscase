@@ -16,7 +16,8 @@ Class {
 		'hiddenSize',
 		'vocabSize',
 		'headDim',
-		'eps'
+		'eps',
+		'precision'
 	],
 	#classVars : [
 		'DefaultModel'
@@ -289,6 +290,15 @@ GcGpt2Model >> decodeToken: tokenId cache: aCache [
 	^ GcTensorMath unembedHidden: (GcTensorMath layerNorm: x gamma: lnfW beta: lnfB eps: eps) dim: d table: wte vocab: vocabSize
 ]
 
+{ #category : 'weights' }
+GcGpt2Model >> decodeWeight: aName [
+	"Decode the named tensor losslessly to a Float64Array, then apply the current precision (identity for #f32). Per-row integer scaling needs the tensor's dimensions, so read them from the ref."
+	| ref f64 |
+	ref := self tensorNamed: aName.
+	f64 := ref asFloatArray.
+	^ self precision apply: f64 dimensions: ref dimensions
+]
+
 { #category : 'accessing' }
 GcGpt2Model >> eps [
 	^ eps
@@ -507,6 +517,19 @@ GcGpt2Model >> overviewFacets [
 		'Config' -> config }
 ]
 
+{ #category : 'precision' }
+GcGpt2Model >> precision [
+	"The weight-precision mode applied when decoding each weight tensor. nil (the default, e.g. the shared #default model) resolves to #f32 -- exact full precision, the baseline."
+	^ precision ifNil: [ GcWeightPrecision f32 ]
+]
+
+{ #category : 'precision' }
+GcGpt2Model >> precision: aPrecisionOrSymbol [
+	"Set the weight-precision mode (a GcWeightPrecision or a bare symbol #f32/#bf16/#int8/#int4) and INVALIDATE the decoded-weight cache so every weight re-decodes and re-quantizes at the new precision on next use. NEVER call this on the shared GcGpt2Model default -- run each precision on a FRESH openDefault model so the memoized default stays clean f32."
+	precision := GcWeightPrecision fromSymbol: aPrecisionOrSymbol.
+	self unloadWeights
+]
+
 { #category : 'forward - kv cache' }
 GcGpt2Model >> prefillTokenIds: ids cache: aCache [
 	"KV-cache PREFILL: run the full pre-norm forward over the whole prompt at once (the compute-bound phase), appending every position's per-layer key/value into aCache. Returns the LAST-position logits -- identical to forwardTokenIds:. aCache must already be sized (numLayers:) and empty."
@@ -570,8 +593,8 @@ GcGpt2Model >> vocabSize [
 
 { #category : 'weights' }
 GcGpt2Model >> weight: aName [
-	"The named weight tensor decoded to a row-major Float64Array -- decoded from F32 on disk to F64 at most once, then cached."
-	^ self weightCache at: aName ifAbsentPut: [ (self tensorNamed: aName) asFloatArray ]
+	"The named weight tensor decoded to a row-major Float64Array -- decoded from F32 on disk to F64 at most once, then cached. When the precision is not #f32 the decoded values are quantized-then-dequantized (simulating reduced-precision storage) BEFORE caching, so the whole forward pass runs on the low-precision weights."
+	^ self weightCache at: aName ifAbsentPut: [ self decodeWeight: aName ]
 ]
 
 { #category : 'accessing' }
