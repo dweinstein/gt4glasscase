@@ -18,6 +18,91 @@ GcGpt2InferenceExamples >> assertTrue: aBoolean [
 	aBoolean ifFalse: [ self error: 'assertion failed' ]
 ]
 
+{ #category : 'examples - kv cache' }
+GcGpt2InferenceExamples >> cachedAttentionMatchesFullAttentionExample [
+	<gtExample>
+	"Hermetic correctness of the KV-cache attention math -- no weights. On a tiny 2-head / headDim-2 (hiddenSize 4) case with known q/k/v, the single-query cached attention (cachedAttentionQuery:scale:keys:values:) must equal the LAST position of the full causal attention (attentionFrom:seqLen:scale:) to floating-point exactness. This isolates the cache attention from the 500MB weights and is the automated guardrail for the mathematical-identity claim."
+	| model d seqLen scale qkv full cache cached maxDiff |
+	d := 4.
+	model := GcGpt2Model new.
+	model instVarNamed: 'hiddenSize' put: d.
+	model instVarNamed: 'numHeads' put: 2.
+	model instVarNamed: 'headDim' put: 2.
+	seqLen := 3.
+	scale := 0.5.
+	qkv := (1 to: seqLen) collect: [ :i |
+		| a |
+		a := Float64Array new: 3 * d.
+		1 to: 3 * d do: [ :t | a at: t put: ((i * 0.1) + (t * 0.03)) sin ].
+		a ].
+	full := model attentionFrom: qkv seqLen: seqLen scale: scale.
+	cache := GcKvCache new numLayers: 1.
+	1 to: seqLen do: [ :i |
+		| kv key val |
+		kv := qkv at: i.
+		key := Float64Array new: d.
+		val := Float64Array new: d.
+		1 to: d do: [ :t | key at: t put: (kv at: d + t). val at: t put: (kv at: 2 * d + t) ].
+		cache appendKey: key value: val forLayer: 0 ].
+	cached := model cachedAttentionQuery: (qkv at: seqLen) scale: scale keys: (cache keysForLayer: 0) values: (cache valuesForLayer: 0).
+	maxDiff := self maxAbsDiffBetween: (full at: seqLen) and: cached.
+	self assertTrue: maxDiff <= 1e-9.
+	^ maxDiff
+]
+
+{ #category : 'examples - kv cache' }
+GcGpt2InferenceExamples >> cachedEqualsUncachedTokensExample [
+	<gtExample>
+	<noTest>
+	"Token-identity + speedup on the real weights. Generate 4 tokens from the in-context prompt via BOTH the KV-cached path (generateCachedFromTokenIds:maxTokens:) and the uncached path (generateFromTokenIds:maxTokens:); the two generatedIds sequences must be EQUAL (a cache bug shows up as divergent ids). Reports both wall-times and the speedup. noTest: loads ~500MB and runs both paths."
+	| model ids cachedGen uncachedGen cachedMs uncachedMs cachedIds uncachedIds result |
+	model := GcGpt2Model default.
+	ids := self franceInContextPromptIds.
+	cachedMs := [ cachedGen := model generateCachedFromTokenIds: ids maxTokens: 4 ] millisecondsToRun.
+	uncachedMs := [ uncachedGen := model generateFromTokenIds: ids maxTokens: 4 ] millisecondsToRun.
+	cachedIds := cachedGen generatedIds asArray.
+	uncachedIds := uncachedGen generatedIds asArray.
+	self assert: cachedIds equals: uncachedIds.
+	result := Dictionary new.
+	result
+		at: #cachedIds put: cachedIds;
+		at: #uncachedIds put: uncachedIds;
+		at: #cachedMs put: cachedMs;
+		at: #uncachedMs put: uncachedMs;
+		at: #speedup put: (uncachedMs / (cachedMs max: 1)) asFloat;
+		at: #generation put: cachedGen.
+	^ result
+]
+
+{ #category : 'examples - kv cache' }
+GcGpt2InferenceExamples >> cachedPrefillMatchesUncachedExample [
+	<gtExample>
+	<noTest>
+	"Mathematical identity of the KV-cache path against the uncached forward, on the real gpt2-124M weights. (1) prefillTokenIds:cache: over the in-context prompt must give last-position logits equal to forwardTokenIds: (max-abs diff <= 1e-6). (2) then decodeToken: one token must equal a fresh uncached forwardTokenIds: over prompt+thatToken (<= 1e-6). Proves prefill and decode are numerically identical to full recomputation. noTest: loads ~500MB and runs ~3 forwards."
+	| model ids cache prefillLogits fullLogits prefillDiff tok decodeLogits fullLogits2 decodeDiff result |
+	model := GcGpt2Model default.
+	ids := self franceInContextPromptIds.
+	cache := GcKvCache new numLayers: model numLayers.
+	prefillLogits := model prefillTokenIds: ids cache: cache.
+	fullLogits := model forwardTokenIds: ids.
+	prefillDiff := self maxAbsDiffBetween: prefillLogits and: fullLogits.
+	self assertTrue: prefillDiff <= 1e-6.
+	tok := GcTensorMath argmax: prefillLogits.
+	decodeLogits := model decodeToken: tok cache: cache.
+	fullLogits2 := model forwardTokenIds: (ids asArray , (Array with: tok)).
+	decodeDiff := self maxAbsDiffBetween: decodeLogits and: fullLogits2.
+	self assertTrue: decodeDiff <= 1e-6.
+	self assert: cache seqLength equals: ids size + 1.
+	result := Dictionary new.
+	result
+		at: #prefillMaxAbsDiff put: prefillDiff;
+		at: #decodeMaxAbsDiff put: decodeDiff;
+		at: #decodedToken put: tok;
+		at: #cacheSeqLength put: cache seqLength;
+		at: #cacheBytes put: cache memoryBytes.
+	^ result
+]
+
 { #category : 'examples' }
 GcGpt2InferenceExamples >> capitalAnalogyBerlinExample [
 	<gtExample>
@@ -96,6 +181,36 @@ GcGpt2InferenceExamples >> inContextGreedyParisExample [
 	self assert: greedyId equals: 6342.
 	self assert: decoded equals: ' Paris'.
 	^ result
+]
+
+{ #category : 'examples - kv cache' }
+GcGpt2InferenceExamples >> kvCacheAccumulationExample [
+	<gtExample>
+	"Hermetic cache mechanics -- no weights. Append K/V for a couple of positions to two layers and check seqLength, per-layer sizes, memoryBytes (8 bytes/Float64 element) and reset. Proves the GcKvCache bookkeeping the decode path relies on."
+	| cache k v |
+	cache := GcKvCache new numLayers: 2.
+	k := Float64Array new: 4. v := Float64Array new: 4.
+	1 to: 4 do: [ :t | k at: t put: t asFloat. v at: t put: (t * 10) asFloat ].
+	cache appendKey: k value: v forLayer: 0.
+	cache appendKey: k copy value: v copy forLayer: 1.
+	cache appendKey: k copy value: v copy forLayer: 0.
+	self assert: cache seqLength equals: 2.
+	self assert: (cache keysForLayer: 0) size equals: 2.
+	self assert: (cache keysForLayer: 1) size equals: 1.
+	self assert: cache memoryBytes equals: (4 + 2) * 4 * 8.
+	cache reset.
+	self assert: cache seqLength equals: 0.
+	self assert: cache memoryBytes equals: 0.
+	^ cache
+]
+
+{ #category : 'asserting' }
+GcGpt2InferenceExamples >> maxAbsDiffBetween: a and: b [
+	"Maximum absolute element-wise difference between two equal-length numeric vectors."
+	| m |
+	m := 0.0.
+	1 to: a size do: [ :i | | diff | diff := ((a at: i) - (b at: i)) abs. diff > m ifTrue: [ m := diff ] ].
+	^ m
 ]
 
 { #category : 'examples' }

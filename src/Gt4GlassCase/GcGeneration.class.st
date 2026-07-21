@@ -8,7 +8,8 @@ Class {
 		'promptIds',
 		'generatedIds',
 		'stepLogits',
-		'model'
+		'model',
+		'phaseSteps'
 	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
@@ -40,6 +41,27 @@ GcGeneration >> generatedIds: aCollection [
 GcGeneration >> generatedText [
 	"The decoded continuation (generated tokens only)."
 	^ GcGpt2Decoder default decodeIds: generatedIds asArray
+]
+
+{ #category : 'gt - views' }
+GcGeneration >> gtPhasesFor: aView [
+	<gtView>
+	phaseSteps isNil ifTrue: [ ^ aView empty ].
+	^ aView columnedList
+		title: 'Phases';
+		priority: 6;
+		items: [ phaseSteps ];
+		column: 'Phase' text: [ :step | step phase printString ];
+		column: 'Tokens' text: [ :step | step tokenCount printString ];
+		column: 'ms' text: [ :step | step milliseconds printString ];
+		column: 'ms / token' text: [ :step | step msPerToken printString ];
+		column: 'seqLen after' text: [ :step | step seqLengthAfter printString ];
+		column: 'time' text: [ :step |
+			| maxMs bars |
+			maxMs := (phaseSteps collect: [ :s | s milliseconds ]) max.
+			bars := maxMs = 0 ifTrue: [ 1 ] ifFalse: [ (step milliseconds / maxMs * 30) rounded max: 1 ].
+			String new: bars withAll: $= ];
+		send: [ :step | step ]
 ]
 
 { #category : 'views' }
@@ -84,6 +106,12 @@ GcGeneration >> gtTokensFor: aView [
 ]
 
 { #category : 'accessing' }
+GcGeneration >> isCached [
+	"True when produced by the KV-cached path (has recorded prefill/decode phase steps)."
+	^ phaseSteps notNil
+]
+
+{ #category : 'accessing' }
 GcGeneration >> model [
 	^ model
 ]
@@ -91,6 +119,16 @@ GcGeneration >> model [
 { #category : 'accessing' }
 GcGeneration >> model: aModel [
 	model := aModel
+]
+
+{ #category : 'accessing' }
+GcGeneration >> phaseSteps [
+	^ phaseSteps
+]
+
+{ #category : 'accessing' }
+GcGeneration >> phaseSteps: aCollection [
+	phaseSteps := aCollection
 ]
 
 { #category : 'printing' }
