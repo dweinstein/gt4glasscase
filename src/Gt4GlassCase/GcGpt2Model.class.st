@@ -62,7 +62,7 @@ GcGpt2Model class >> reset [
 
 { #category : 'forward pass' }
 GcGpt2Model >> applyBlock: li to: inHidden seqLen: seqLen scale: scale trace: aTrace level: level [
-	"One pre-norm transformer block li (0-based) over the per-position hidden states inHidden. attn: x + c_proj(attention(LN1(x))); mlp: y + c_proj(gelu_new(c_fc(LN2(y)))). All linears use the HF Conv1D no-transpose convention. Returns the block output; records a GcLayerRecord when level is #residuals or #full."
+	"One pre-norm transformer block li (0-based) over the per-position hidden states inHidden. attn: x + c_proj(attention(LN1(x))); mlp: y + c_proj(gelu_new(c_fc(LN2(y)))). All linears use the HF Conv1D no-transpose convention. Returns the block output; records a GcLayerRecord when level is #residuals or #full. At #full also captures attnOut, mlpOut and the per-head causal attention probability matrices (attnWeights)."
 	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv attnOut attnProj midHidden normed2 fc act mlpOut outHidden record |
 	d := hiddenSize.
 	prefix := 'h.', li printString, '.'.
@@ -95,7 +95,11 @@ GcGpt2Model >> applyBlock: li to: inHidden seqLen: seqLen scale: scale trace: aT
 			residualMid: midHidden;
 			residualOut: outHidden;
 			yourself.
-		level = #full ifTrue: [ record attnOut: attnProj; mlpOut: mlpOut ].
+		level = #full ifTrue: [
+			record
+				attnOut: attnProj;
+				mlpOut: mlpOut;
+				attnWeights: (self attentionWeightsFrom: qkv seqLen: seqLen scale: scale) ].
 		aTrace addLayerRecord: record ].
 	^ outHidden
 ]
@@ -173,6 +177,31 @@ GcGpt2Model >> attentionFrom: qkv seqLen: seqLen scale: scale [
 				ctx at: hoff + t put: acc ] ].
 		out at: qi put: ctx ].
 	^ out
+]
+
+{ #category : 'forward pass' }
+GcGpt2Model >> attentionWeightsFrom: qkv seqLen: seqLen scale: scale [
+	"The per-head causal attention PROBABILITY matrices for the traced forward pass. Mirrors attentionFrom:seqLen:scale: but keeps the softmaxed weights instead of the context. Returns an Array of numHeads elements; element h is an Array of seqLen query rows, each a Float64Array of seqLen key columns, with weights[h][qi][kj] = softmax over keys j <= qi of (q_i . k_j) * scale and 0.0 for kj > qi. Recomputed (a second attention pass) only at trace level #full, so #none / #residuals stay untouched."
+	| d weights |
+	d := hiddenSize.
+	weights := (1 to: numHeads) collect: [ :hh | (1 to: seqLen) collect: [ :qi | Float64Array new: seqLen ] ].
+	1 to: seqLen do: [ :qi |
+		| qVec |
+		qVec := qkv at: qi.
+		0 to: numHeads - 1 do: [ :h |
+			| hoff scores probs row |
+			hoff := h * headDim.
+			scores := Float64Array new: qi.
+			1 to: qi do: [ :kj |
+				| kVec dot |
+				kVec := qkv at: kj.
+				dot := 0.0.
+				1 to: headDim do: [ :t | dot := dot + ((qVec at: hoff + t) * (kVec at: d + hoff + t)) ].
+				scores at: kj put: dot * scale ].
+			probs := GcTensorMath softmax: scores.
+			row := (weights at: h + 1) at: qi.
+			1 to: qi do: [ :kj | row at: kj put: (probs at: kj) ] ] ].
+	^ weights
 ]
 
 { #category : 'forward - kv cache' }
