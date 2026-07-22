@@ -145,6 +145,115 @@ GcExamples >> axisVector: anIndex dimension: aDimension [
 	^ vector
 ]
 
+{ #category : 'examples - stage d behavioral' }
+GcExamples >> behavioralConceptSpaceGpt2ProbesDemo [
+	<gtExample>
+	<noTest>
+	"Stage D end-to-end on the REAL gpt2-124M: 'A {word} is a kind of ___' for 7 words spanning the Stage-A concept set (dog cat king France red apple happy). Records the model's actual top predictions and which concept (if any) each names. GPT-2-124M's hypernym completions are often generic/noisy, so many words match no concept -- that honest mismatch with the embedding graph IS the finding. One short forward per word (KV cache); unloads weights at the end to leave the shared model clean."
+	| space |
+	space := GcBehavioralConceptSpace defaultGpt2.
+	space probeAll.
+	self assert: space resultsOrEmpty size equals: 7.
+	self assert: (space resultsOrEmpty allSatisfy: [ :r | r topEntry notNil ]).
+	self assert: (space resultsOrEmpty allSatisfy: [ :r | r entriesOrEmpty size = 5 ]).
+	space model unloadWeights.
+	^ space
+]
+
+{ #category : 'examples - stage d behavioral' }
+GcExamples >> behavioralGraphBuildsOnSyntheticResults [
+	<gtExample>
+	"Stage D: the behavioral relationship graph builds from a synthetic set of GcConceptProbeResults with NO model -- distinct matched concepts, word->concept edges, and circle+below-label node elements; the Mondrian paints without error."
+	| concepts mk results space node |
+	concepts := {
+		GcConcept name: 'animal' words: #(' dog' ' cat').
+		GcConcept name: 'royalty' words: #(' king' ' queen') }.
+	mk := [ :w :text | (GcConceptProbeResult
+		word: w template: 't'
+		entries: { GcLogitLensEntry rank: 1 tokenId: 0 tokenText: text logit: 1.0 prob: 0.5 })
+			concepts: concepts; yourself ].
+	results := {
+		mk value: 'dog' value: ' animal'.
+		mk value: 'cat' value: ' animal'.
+		mk value: 'king' value: ' royalty'.
+		mk value: 'France' value: ' country' }.
+	space := GcBehavioralConceptSpace words: #('dog' 'cat' 'king' 'France') template: 't' model: nil concepts: concepts.
+	space results: results.
+	self assert: space resultsOrEmpty size equals: 4.
+	self assert: (space matchedConcepts collect: [ :c | c name ]) asArray equals: #('animal' 'royalty').
+	self assert: space edgePairs size equals: 3.
+	node := space nodeElementForResult: results first.
+	self assert: node children size equals: 2.
+	self assert: (node children anySatisfy: [ :c | c geometry isKindOf: BlCircleGeometry ]).
+	space paintBehavioralGraphOn: GtMondrian new.
+	^ space
+]
+
+{ #category : 'examples - stage d behavioral' }
+GcExamples >> behavioralMatchedConceptLogic [
+	<gtExample>
+	"Stage D: matchedConcept maps a top prediction's decoded text (whitespace-trimmed, case-insensitive) onto a concept by NAME or by MEMBER WORD, and answers nil when nothing matches -- all with no model."
+	| concepts mk animal royalty none |
+	concepts := {
+		GcConcept name: 'animal' words: #(' dog' ' cat').
+		GcConcept name: 'royalty' words: #(' king' ' queen') }.
+	mk := [ :text | (GcConceptProbeResult
+		word: 'w' template: 't'
+		entries: { GcLogitLensEntry rank: 1 tokenId: 0 tokenText: text logit: 1.0 prob: 0.5 })
+			concepts: concepts; yourself ].
+	animal := mk value: ' ANIMAL'.
+	royalty := mk value: ' king'.
+	none := mk value: ' xyzzy'.
+	self assert: animal matchedConcept name equals: 'animal'.
+	self assert: royalty matchedConcept name equals: 'royalty'.
+	self assert: none matchedConcept isNil.
+	self assert: animal topText equals: 'animal'.
+	^ { animal. royalty. none }
+]
+
+{ #category : 'examples - stage d behavioral' }
+GcExamples >> behavioralProbeBuildsPromptAndIds [
+	<gtExample>
+	"Stage D: a GcConceptProbe fills its hypernym template and encodes the prompt with NO model (hermetic). 'A {word} is a kind of' + 'France' -> the exact GPT-2 token ids, ending in ' of' (286)."
+	| probe |
+	probe := GcConceptProbe word: 'France' template: 'A {word} is a kind of' model: nil.
+	self assert: probe promptText equals: 'A France is a kind of'.
+	self assert: probe promptIds equals: #(32 4881 318 257 1611 286).
+	self assert: probe promptIds last equals: 286.
+	self assert: (GcConceptProbe word: 'dog' template: 'A {word} is a kind of' model: nil) promptText equals: 'A dog is a kind of'.
+	self assert: GcConceptProbe defaultTemplate equals: 'A {word} is a kind of'.
+	^ probe
+]
+
+{ #category : 'examples - stage d behavioral' }
+GcExamples >> behavioralTopKFromKnownLogits [
+	<gtExample>
+	"Stage D: the linear top-k logit-lens extraction (reused GcLogitLens idiom) over a KNOWN logits array + a synthetic probs array returns the right ranked tokens and probabilities -- hand-checkable, no model."
+	| logits probs entries |
+	logits := Float64Array new: 12.
+	logits at: 4 put: 5.0.
+	logits at: 8 put: 3.0.
+	logits at: 2 put: 2.0.
+	logits at: 11 put: 1.0.
+	probs := Float64Array new: 12.
+	probs at: 4 put: 0.6.
+	probs at: 8 put: 0.25.
+	probs at: 2 put: 0.1.
+	probs at: 11 put: 0.03.
+	entries := GcConceptProbe new topEntriesFromLogits: logits probs: probs k: 3.
+	self assert: entries size equals: 3.
+	self assert: (entries collect: [ :e | e tokenId ]) asArray equals: #(3 7 1).
+	self assert: (entries collect: [ :e | e rank ]) asArray equals: #(1 2 3).
+	self assert: entries first logit equals: 5.0.
+	self assert: entries first prob equals: 0.6.
+	self assert: (entries at: 2) logit equals: 3.0.
+	self assert: (entries at: 2) prob equals: 0.25.
+	self assert: (entries at: 3) tokenId equals: 1.
+	self assert: (entries at: 3) prob equals: 0.1.
+	self assert: entries first tokenText notNil.
+	^ entries
+]
+
 { #category : 'examples - coverage' }
 GcExamples >> campaignPlanCoverage [
 	<gtExample>
