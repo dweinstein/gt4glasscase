@@ -35,16 +35,24 @@ GcGpt2Model class >> cachePath [
 ]
 
 { #category : 'instance creation' }
+GcGpt2Model class >> cachePathFor: aNameOrPath [
+	"Resolve a checkpoint name ('gpt2', 'distilgpt2', 'gpt2-medium', ...) to its directory under the local glassbox cache, or accept an explicit path (a FileReference, or a String containing '/') as-is."
+	(aNameOrPath isKindOf: FileReference) ifTrue: [ ^ aNameOrPath ].
+	(aNameOrPath isString and: [ aNameOrPath includes: $/ ]) ifTrue: [ ^ aNameOrPath asFileReference ].
+	^ FileLocator home / '.cache' / 'glassbox' / aNameOrPath
+]
+
+{ #category : 'instance creation' }
 GcGpt2Model class >> default [
 	"A memoized shared model so the ~500 MB of weights are decoded at most once per image session (both end-to-end examples reuse the warm weight cache)."
 	^ DefaultModel ifNil: [ DefaultModel := self openDefault ]
 ]
 
 { #category : 'instance creation' }
-GcGpt2Model class >> openDefault [
-	"Load the openai-community/gpt2 weights + config from the local glassbox cache into a FRESH model (empty weight cache). Mirrors GcHuggingFaceModelSource>>safetensorsFile construction with a local-file bytes provider."
+GcGpt2Model class >> openCheckpoint: aNameOrPath [
+	"Load weights + config from a named GPT-2-family checkpoint (short name resolved under the local glassbox cache, or an explicit path) into a FRESH model (empty weight cache). Mirrors openDefault's local-file bytes provider construction for arbitrary checkpoints (distilgpt2, gpt2-medium, ...)."
 	| dir provider file hdrLenBytes hdrLen hdrBytes hdrString cfg |
-	dir := self cachePath.
+	dir := self cachePathFor: aNameOrPath.
 	provider := GcLocalFileBytesProvider forPath: dir / 'model.safetensors'.
 	file := GcSafetensorsFile new bytesProvider: provider; path: provider path pathString; yourself.
 	hdrLenBytes := provider provideBytesFrom: 0 to: 7.
@@ -55,6 +63,12 @@ GcGpt2Model class >> openDefault [
 	file parseHeaderString: hdrString.
 	cfg := GcModelConfig fromDictionary: (STONJSON fromString: (dir / 'config.json') contents).
 	^ self new initializeFile: file config: cfg; yourself
+]
+
+{ #category : 'instance creation' }
+GcGpt2Model class >> openDefault [
+	"Load the openai-community/gpt2 weights + config from the local glassbox cache into a FRESH model (empty weight cache)."
+	^ self openCheckpoint: 'gpt2'
 ]
 
 { #category : 'weights' }
@@ -595,9 +609,15 @@ GcGpt2Model >> tensorIndex [
 		tensorIndex ]
 ]
 
-{ #category : 'weights' }
+{ #category : 'accessing' }
 GcGpt2Model >> tensorNamed: aName [
-	^ self tensorIndex at: aName ifAbsent: [ self error: 'No tensor named ', aName ]
+	"Bare name first; falls back to the 'transformer.' prefix used by some checkpoints (e.g. distilgpt2's model.safetensors). Zero behavior change for bare-named checkpoints (gpt2, gpt2-medium)."
+	^ self tensorIndex
+		at: aName
+		ifAbsent: [
+			self tensorIndex
+				at: 'transformer.', aName
+				ifAbsent: [ self error: 'No tensor named ', aName ] ]
 ]
 
 { #category : 'accessing' }

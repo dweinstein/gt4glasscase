@@ -4,6 +4,9 @@ A hermetic TEST DOUBLE implementing the minimal 'probeable model' protocol that 
 Class {
 	#name : 'GcProbeableStubModel',
 	#superclass : 'Object',
+	#instVars : [
+		'logitOverrides'
+	],
 	#category : 'Gt4GlassCase',
 	#package : 'Gt4GlassCase'
 }
@@ -25,18 +28,38 @@ GcProbeableStubModel >> encode: aString [
 	^ aString asArray collect: [ :ch | ch asInteger \\ self vocabSize ]
 ]
 
+{ #category : 'accessing' }
+GcProbeableStubModel >> logitOverrides [
+	"nil by default (no override: exact original deterministic behavior). Otherwise a Dictionary keyed by an exact prompt-ids Array answering an integer peak-shift for THAT prompt, or a plain Integer applied unconditionally to every prompt -- lets two stub instances AGREE on some prompts and DISAGREE on others (see overrideFor:)."
+	^ logitOverrides
+]
+
+{ #category : 'accessing' }
+GcProbeableStubModel >> logitOverrides: aDictionaryOrInteger [
+	logitOverrides := aDictionaryOrInteger
+]
+
 { #category : 'api - probeable model' }
 GcProbeableStubModel >> numLayers [
 	"Part of the probeable-model protocol (see class comment)."
 	^ 2
 ]
 
-{ #category : 'api - probeable model' }
+{ #category : 'private' }
+GcProbeableStubModel >> overrideFor: ids [
+	"The integer peak-shift to apply for this exact prompt (0 when logitOverrides is nil, or absent from a Dictionary override)."
+	logitOverrides ifNil: [ ^ 0 ].
+	(logitOverrides isKindOf: Dictionary) ifTrue: [ ^ logitOverrides at: ids asArray ifAbsent: [ 0 ] ].
+	^ logitOverrides
+]
+
+{ #category : 'accessing' }
 GcProbeableStubModel >> prefillTokenIds: ids cache: aCache [
-	"Deterministic last-position 'logits' over the tiny vocab: highest at (last id + 1) \\ vocabSize, then descending. No weights, no math kernels -- the protocol contract is 'answer a logits array for the last position'."
-	| logits peak |
+	"Deterministic last-position 'logits' over the tiny vocab: highest at (last id + 1 + override) \\ vocabSize, then descending. override is 0 unless logitOverrides is set (see overrideFor:) -- backward compatible with the original fixed-peak behavior. No weights, no math kernels -- the protocol contract is 'answer a logits array for the last position'."
+	| logits peak override |
 	logits := Float64Array new: self vocabSize.
-	peak := ((ids last + 1) \\ self vocabSize) + 1.
+	override := self overrideFor: ids.
+	peak := ((ids last + 1 + override) \\ self vocabSize) + 1.
 	1 to: self vocabSize do: [ :i |
 		logits at: i put: 0.0 - ((i - peak) abs / self vocabSize) ].
 	^ logits

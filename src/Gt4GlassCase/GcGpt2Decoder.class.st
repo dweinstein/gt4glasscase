@@ -74,7 +74,7 @@ GcGpt2Decoder >> decodeId: anId [
 
 { #category : 'decoding' }
 GcGpt2Decoder >> decodeIds: aCollectionOfIds [
-	"Decode token ids to a String. Each id maps to a unicode piece; each unicode char maps back to a byte via byteDecoder; all bytes accumulate through a single WriteStream on: ByteArray new (NOT ByteArray withAll:), and the whole byte buffer is utf8-decoded once at the end."
+	"Decode token ids to a String. Each id maps to a unicode piece; each unicode char maps back to a byte via byteDecoder; all bytes accumulate through a single WriteStream on: ByteArray new (NOT ByteArray withAll:), and the whole byte buffer is utf8-decoded once at the end. Some individual byte-level BPE tokens are not valid UTF-8 in isolation (e.g. one byte of a multi-byte sequence) -- ZnCharacterEncodingError (and its subclass ZnIncomplete) is resumable, so we resume with its default resume value rather than crash."
 	| stream |
 	stream := WriteStream on: ByteArray new.
 	aCollectionOfIds do: [ :id |
@@ -82,7 +82,9 @@ GcGpt2Decoder >> decodeIds: aCollectionOfIds [
 		piece := idToPiece at: id ifAbsent: [ nil ].
 		piece ifNotNil: [
 			piece do: [ :ch | stream nextPut: (byteDecoder at: ch asInteger) ] ] ].
-	^ stream contents utf8Decoded
+	^ [ stream contents utf8Decoded ]
+		on: ZnCharacterEncodingError
+		do: [ :e | e resume: e defaultResumeValue ]
 ]
 
 { #category : 'accessing' }
