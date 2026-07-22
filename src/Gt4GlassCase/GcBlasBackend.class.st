@@ -12,6 +12,13 @@ Class {
 	#tag : 'Performance'
 }
 
+{ #category : 'api - memory' }
+GcBlasBackend >> clearWeightCache [
+	"Free every cached float32 weight buffer (native memory, malloc'd via FFIExternalArray -- NOT garbage collected) and reset the cache. Call before dropping a GcBlasBackend instance, or when the owning model's weights are unloaded (see GcGpt2Model>>unloadWeights), to avoid leaking native buffers."
+	weightBuffers ifNotNil: [ weightBuffers valuesDo: [ :buf | buf free ] ].
+	weightBuffers := nil
+]
+
 { #category : 'converting' }
 GcBlasBackend >> doubleArrayToFloatBuffer: aFloat64Array [
 	"Convert a Float64Array (or any indexable float collection) to a NEW temporary C float buffer (FFIExternalArray of C 'float'), narrowing each element to float32. Caller owns the returned buffer and must #free it, unless it is being cached (see weightBuffers)."

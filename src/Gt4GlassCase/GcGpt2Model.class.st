@@ -18,7 +18,8 @@ Class {
 		'headDim',
 		'eps',
 		'precision',
-		'weightDtype'
+		'weightDtype',
+		'matmulBackend'
 	],
 	#classVars : [
 		'DefaultModel'
@@ -56,17 +57,19 @@ GcGpt2Model class >> openDefault [
 	^ self new initializeFile: file config: cfg; yourself
 ]
 
-{ #category : 'instance creation' }
+{ #category : 'weights' }
 GcGpt2Model class >> reset [
-	"Drop the memoized default model (frees its decoded-weight cache)."
+	"Drop the memoized default model (frees its decoded-weight cache and, if it was using the BLAS backend, that backend's native float32 weight buffers too)."
+	DefaultModel ifNotNil: [ DefaultModel unloadWeights ].
 	DefaultModel := nil
 ]
 
 { #category : 'forward pass' }
 GcGpt2Model >> applyBlock: li to: inHidden seqLen: seqLen scale: scale trace: aTrace level: level [
-	"One pre-norm transformer block li (0-based) over the per-position hidden states inHidden. attn: x + c_proj(attention(LN1(x))); mlp: y + c_proj(gelu_new(c_fc(LN2(y)))). All linears use the HF Conv1D no-transpose convention. Returns the block output; records a GcLayerRecord when level is #residuals or #full. At #full also captures attnOut, mlpOut and the per-head causal attention probability matrices (attnWeights)."
-	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv attnOut attnProj midHidden normed2 fc act mlpOut outHidden record |
+	"One pre-norm transformer block li (0-based) over the per-position hidden states inHidden. attn: x + c_proj(attention(LN1(x))); mlp: y + c_proj(gelu_new(c_fc(LN2(y)))). All linears use the HF Conv1D no-transpose convention, computed via self matmulBackend (naive GcTensorMath by default, or Accelerate BLAS via useBlasBackend). Returns the block output; records a GcLayerRecord when level is #residuals or #full. At #full also captures attnOut, mlpOut and the per-head causal attention probability matrices (attnWeights)."
+	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv attnOut attnProj midHidden normed2 fc act mlpOut outHidden record backend |
 	d := hiddenSize.
+	backend := self matmulBackend.
 	prefix := 'h.', li printString, '.'.
 	ln1W := self weight: prefix, 'ln_1.weight'.
 	ln1B := self weight: prefix, 'ln_1.bias'.
@@ -81,14 +84,14 @@ GcGpt2Model >> applyBlock: li to: inHidden seqLen: seqLen scale: scale trace: aT
 	cMlpW := self weight: prefix, 'mlp.c_proj.weight'.
 	cMlpB := self weight: prefix, 'mlp.c_proj.bias'.
 	normed := inHidden collect: [ :x | GcTensorMath layerNorm: x gamma: ln1W beta: ln1B eps: eps ].
-	qkv := normed collect: [ :a | GcTensorMath mmulNoTransposeInput: a inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB ].
+	qkv := normed collect: [ :a | backend mmulNoTransposeInput: a inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB ].
 	attnOut := self attentionFrom: qkv seqLen: seqLen scale: scale.
-	attnProj := attnOut collect: [ :o | GcTensorMath mmulNoTransposeInput: o inSize: d weight: cProjW outSize: d bias: cProjB ].
+	attnProj := attnOut collect: [ :o | backend mmulNoTransposeInput: o inSize: d weight: cProjW outSize: d bias: cProjB ].
 	midHidden := (1 to: seqLen) collect: [ :i | GcTensorMath add: (inHidden at: i) and: (attnProj at: i) ].
 	normed2 := midHidden collect: [ :x | GcTensorMath layerNorm: x gamma: ln2W beta: ln2B eps: eps ].
-	fc := normed2 collect: [ :b | GcTensorMath mmulNoTransposeInput: b inSize: d weight: cFcW outSize: 4 * d bias: cFcB ].
+	fc := normed2 collect: [ :b | backend mmulNoTransposeInput: b inSize: d weight: cFcW outSize: 4 * d bias: cFcB ].
 	act := fc collect: [ :f | GcTensorMath geluNew: f ].
-	mlpOut := act collect: [ :m | GcTensorMath mmulNoTransposeInput: m inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB ].
+	mlpOut := act collect: [ :m | backend mmulNoTransposeInput: m inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB ].
 	outHidden := (1 to: seqLen) collect: [ :i | GcTensorMath add: (midHidden at: i) and: (mlpOut at: i) ].
 	(level = #residuals or: [ level = #full ]) ifTrue: [
 		record := GcLayerRecord new
@@ -106,11 +109,12 @@ GcGpt2Model >> applyBlock: li to: inHidden seqLen: seqLen scale: scale trace: aT
 	^ outHidden
 ]
 
-{ #category : 'forward - kv cache' }
+{ #category : 'forward pass' }
 GcGpt2Model >> applyBlockCached: li to: inHidden seqLen: seqLen scale: scale cache: aCache [
-	"Prefill variant of applyBlock:to:seqLen:scale:trace:level: : identical block math, but also appends each position's key/value (the [d,2d) and [2d,3d) slices of that position's c_attn output) into aCache for layer li so the decode phase can attend over them. No trace."
-	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv attnOut attnProj midHidden normed2 fc act mlpOut outHidden |
+	"Prefill variant of applyBlock:to:seqLen:scale:trace:level: : identical block math (via self matmulBackend), but also appends each position's key/value (the [d,2d) and [2d,3d) slices of that position's c_attn output) into aCache for layer li so the decode phase can attend over them. No trace."
+	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv attnOut attnProj midHidden normed2 fc act mlpOut outHidden backend |
 	d := hiddenSize.
+	backend := self matmulBackend.
 	prefix := 'h.', li printString, '.'.
 	ln1W := self weight: prefix, 'ln_1.weight'.
 	ln1B := self weight: prefix, 'ln_1.bias'.
@@ -125,7 +129,7 @@ GcGpt2Model >> applyBlockCached: li to: inHidden seqLen: seqLen scale: scale cac
 	cMlpW := self weight: prefix, 'mlp.c_proj.weight'.
 	cMlpB := self weight: prefix, 'mlp.c_proj.bias'.
 	normed := inHidden collect: [ :x | GcTensorMath layerNorm: x gamma: ln1W beta: ln1B eps: eps ].
-	qkv := normed collect: [ :a | GcTensorMath mmulNoTransposeInput: a inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB ].
+	qkv := normed collect: [ :a | backend mmulNoTransposeInput: a inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB ].
 	qkv doWithIndex: [ :vec :i |
 		| kVec vVec |
 		kVec := Float64Array new: d.
@@ -135,12 +139,12 @@ GcGpt2Model >> applyBlockCached: li to: inHidden seqLen: seqLen scale: scale cac
 			vVec at: t put: (vec at: 2 * d + t) ].
 		aCache appendKey: kVec value: vVec forLayer: li ].
 	attnOut := self attentionFrom: qkv seqLen: seqLen scale: scale.
-	attnProj := attnOut collect: [ :o | GcTensorMath mmulNoTransposeInput: o inSize: d weight: cProjW outSize: d bias: cProjB ].
+	attnProj := attnOut collect: [ :o | backend mmulNoTransposeInput: o inSize: d weight: cProjW outSize: d bias: cProjB ].
 	midHidden := (1 to: seqLen) collect: [ :i | GcTensorMath add: (inHidden at: i) and: (attnProj at: i) ].
 	normed2 := midHidden collect: [ :x | GcTensorMath layerNorm: x gamma: ln2W beta: ln2B eps: eps ].
-	fc := normed2 collect: [ :b | GcTensorMath mmulNoTransposeInput: b inSize: d weight: cFcW outSize: 4 * d bias: cFcB ].
+	fc := normed2 collect: [ :b | backend mmulNoTransposeInput: b inSize: d weight: cFcW outSize: 4 * d bias: cFcB ].
 	act := fc collect: [ :f | GcTensorMath geluNew: f ].
-	mlpOut := act collect: [ :m | GcTensorMath mmulNoTransposeInput: m inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB ].
+	mlpOut := act collect: [ :m | backend mmulNoTransposeInput: m inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB ].
 	outHidden := (1 to: seqLen) collect: [ :i | GcTensorMath add: (midHidden at: i) and: (mlpOut at: i) ].
 	^ outHidden
 ]
@@ -239,9 +243,10 @@ GcGpt2Model >> config [
 
 { #category : 'forward - kv cache' }
 GcGpt2Model >> decodeBlock: li hidden: inVec scale: scale cache: aCache [
-	"KV-cache DECODE of one new token through block li (0-based). Computes the new token's LN1 -> c_attn, extracts and appends its key/value to aCache, attends over ALL cached K/V for this layer (causality is automatic -- the cache holds only past+current), then c_proj + residual + gelu MLP + residual. inVec is the d-length hidden for the new token; returns the block output (d-length)."
-	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv kVec vVec ctx attnProj mid normed2 fc act mlpOut |
+	"KV-cache DECODE of one new token through block li (0-based). Computes the new token's LN1 -> c_attn (via self matmulBackend), extracts and appends its key/value to aCache, attends over ALL cached K/V for this layer (causality is automatic -- the cache holds only past+current), then c_proj + residual + gelu MLP + residual. inVec is the d-length hidden for the new token; returns the block output (d-length)."
+	| d prefix ln1W ln1B cAttnW cAttnB cProjW cProjB ln2W ln2B cFcW cFcB cMlpW cMlpB normed qkv kVec vVec ctx attnProj mid normed2 fc act mlpOut backend |
 	d := hiddenSize.
+	backend := self matmulBackend.
 	prefix := 'h.', li printString, '.'.
 	ln1W := self weight: prefix, 'ln_1.weight'.
 	ln1B := self weight: prefix, 'ln_1.bias'.
@@ -256,7 +261,7 @@ GcGpt2Model >> decodeBlock: li hidden: inVec scale: scale cache: aCache [
 	cMlpW := self weight: prefix, 'mlp.c_proj.weight'.
 	cMlpB := self weight: prefix, 'mlp.c_proj.bias'.
 	normed := GcTensorMath layerNorm: inVec gamma: ln1W beta: ln1B eps: eps.
-	qkv := GcTensorMath mmulNoTransposeInput: normed inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB.
+	qkv := backend mmulNoTransposeInput: normed inSize: d weight: cAttnW outSize: 3 * d bias: cAttnB.
 	kVec := Float64Array new: d.
 	vVec := Float64Array new: d.
 	1 to: d do: [ :t |
@@ -264,12 +269,12 @@ GcGpt2Model >> decodeBlock: li hidden: inVec scale: scale cache: aCache [
 		vVec at: t put: (qkv at: 2 * d + t) ].
 	aCache appendKey: kVec value: vVec forLayer: li.
 	ctx := self cachedAttentionQuery: qkv scale: scale keys: (aCache keysForLayer: li) values: (aCache valuesForLayer: li).
-	attnProj := GcTensorMath mmulNoTransposeInput: ctx inSize: d weight: cProjW outSize: d bias: cProjB.
+	attnProj := backend mmulNoTransposeInput: ctx inSize: d weight: cProjW outSize: d bias: cProjB.
 	mid := GcTensorMath add: inVec and: attnProj.
 	normed2 := GcTensorMath layerNorm: mid gamma: ln2W beta: ln2B eps: eps.
-	fc := GcTensorMath mmulNoTransposeInput: normed2 inSize: d weight: cFcW outSize: 4 * d bias: cFcB.
+	fc := backend mmulNoTransposeInput: normed2 inSize: d weight: cFcW outSize: 4 * d bias: cFcB.
 	act := GcTensorMath geluNew: fc.
-	mlpOut := GcTensorMath mmulNoTransposeInput: act inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB.
+	mlpOut := backend mmulNoTransposeInput: act inSize: 4 * d weight: cMlpW outSize: d bias: cMlpB.
 	^ GcTensorMath add: mid and: mlpOut
 ]
 
@@ -477,6 +482,18 @@ GcGpt2Model >> initializeFile: aFile config: aConfig [
 	weightCache := Dictionary new
 ]
 
+{ #category : 'accessing' }
+GcGpt2Model >> matmulBackend [
+	"Polymorphic per-layer Conv1D linear backend for the forward pass: GcTensorMath (the class itself, naive interpreted kernels, default) or a GcBlasBackend instance (Accelerate BLAS, opt-in via useBlasBackend). Both respond to mmulNoTransposeInput:inSize:weight:outSize:bias: with the same contract, so callers just send it -- no strategy hierarchy needed. Defaults to GcTensorMath so existing/older instances (whose matmulBackend ivar is nil) keep their exact naive behavior."
+	^ matmulBackend ifNil: [ GcTensorMath ]
+]
+
+{ #category : 'accessing' }
+GcGpt2Model >> matmulBackend: aBackendOrClass [
+	"Set the per-layer Conv1D linear backend directly (GcTensorMath or a GcBlasBackend instance). Prefer useBlasBackend / useNaiveBackend for the common cases."
+	matmulBackend := aBackendOrClass
+]
+
 { #category : 'architecture - hooks' }
 GcGpt2Model >> modelArchitecture [
 	"TGcModelArchitecture hook: the running model's config-derived shape."
@@ -586,8 +603,23 @@ GcGpt2Model >> tracedForwardTokenIds: ids level: aLevel [
 
 { #category : 'weights' }
 GcGpt2Model >> unloadWeights [
-	"Drop the decoded-weight cache (frees ~1 GB of Float64Arrays); tensors re-decode lazily on next use."
-	weightCache := Dictionary new
+	"Drop the decoded-weight cache (frees ~1 GB of Float64Arrays); tensors re-decode lazily on next use. Also frees the BLAS backend's cached float32 weight buffers (native, malloc'd memory -- NOT garbage collected) if a GcBlasBackend is currently in use as matmulBackend."
+	weightCache := Dictionary new.
+	(matmulBackend isKindOf: GcBlasBackend) ifTrue: [ matmulBackend clearWeightCache ]
+]
+
+{ #category : 'api - backend' }
+GcGpt2Model >> useBlasBackend [
+	"Switch the per-layer Conv1D linears (QKV projection, attention output projection, MLP fc, MLP proj) to the Accelerate-BLAS backend. Reuses the current GcBlasBackend instance (and its warm float32 weight cache) if one is already set, so repeated calls stay cheap; creates a fresh one otherwise. Attention inner products, the unembedding, and matmulA:rows:inner:b:cols: stay on the naive GcTensorMath kernels regardless (not rewired in this stage)."
+	(matmulBackend isKindOf: GcBlasBackend) ifFalse: [ matmulBackend := GcBlasBackend new ].
+	^ self
+]
+
+{ #category : 'api - backend' }
+GcGpt2Model >> useNaiveBackend [
+	"Switch the per-layer Conv1D linears back to the naive GcTensorMath kernels (the default)."
+	matmulBackend := GcTensorMath.
+	^ self
 ]
 
 { #category : 'accessing' }

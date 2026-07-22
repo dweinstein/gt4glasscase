@@ -152,6 +152,56 @@ GcGpt2InferenceExamples >> decodeFixturePromptExample [
 	^ decoded
 ]
 
+{ #category : 'examples - backend' }
+GcGpt2InferenceExamples >> exampleBlasForwardDifferential [
+	<gtExample>
+	<noTest>
+	"End-to-end differential + benchmark: the naive GcTensorMath per-layer forward vs the Accelerate-BLAS backend (useBlasBackend), on the real gpt2-124M weights and the short zero-shot prompt 'The capital of France is'. (a) naive forward: argmax id + logits + ms. (b) BLAS forward, COLD -- the first BLAS call per weight tensor populates its float32 cache: argmax id + logits + ms. (c) two further BLAS forwards, WARM (weights already cached): ms each. Asserts the BLAS argmax token equals the naive one; also reports the max abs logit difference, the one-time weight-conversion cost (cold - warm, roughly), and the extra resident float32 memory, so a mismatch (possible in principle at float32 precision) would be visible rather than hidden. Restores the naive backend and frees the BLAS backend's native weight buffers before returning, even on failure. noTest: reuses GcGpt2Model default's warm ~500MB weight cache when already loaded and runs 4 real forwards."
+	| model ids naiveLogits naiveMs naiveId blasColdLogits blasColdMs blasColdId blasWarmMs1 blasWarmMs2 maxDiff extraBytes result |
+	model := GcGpt2Model default.
+	ids := GcTokenizer gpt2 encode: 'The capital of France is'.
+	[
+		model useNaiveBackend.
+		naiveMs := [ naiveLogits := model forwardTokenIds: ids ] millisecondsToRun.
+		naiveId := GcTensorMath argmax: naiveLogits.
+
+		model useBlasBackend.
+		blasColdMs := [ blasColdLogits := model forwardTokenIds: ids ] millisecondsToRun.
+		blasColdId := GcTensorMath argmax: blasColdLogits.
+
+		blasWarmMs1 := [ model forwardTokenIds: ids ] millisecondsToRun.
+		blasWarmMs2 := [ model forwardTokenIds: ids ] millisecondsToRun.
+
+		maxDiff := self maxAbsDiffBetween: naiveLogits and: blasColdLogits.
+		extraBytes := 0.
+		model matmulBackend weightBuffers keysAndValuesDo: [ :origArr :buf | extraBytes := extraBytes + (origArr size * 4) ].
+
+		result := Dictionary new.
+		result
+			at: #naiveId put: naiveId;
+			at: #naivePiece put: (GcGpt2Decoder default decodeId: naiveId);
+			at: #blasId put: blasColdId;
+			at: #blasPiece put: (GcGpt2Decoder default decodeId: blasColdId);
+			at: #top1Matches put: naiveId = blasColdId;
+			at: #maxAbsLogitDiff put: maxDiff;
+			at: #naiveMs put: naiveMs;
+			at: #blasColdMs put: blasColdMs;
+			at: #blasWarmMs1 put: blasWarmMs1;
+			at: #blasWarmMs2 put: blasWarmMs2;
+			at: #warmSpeedupVsNaive put: (naiveMs / (((blasWarmMs1 + blasWarmMs2) / 2.0) max: 1)) asFloat;
+			at: #oneTimeConversionMs put: blasColdMs - blasWarmMs1;
+			at: #extraFloat32Bytes put: extraBytes;
+			at: #logitsSize put: naiveLogits size.
+
+		self assert: naiveLogits size equals: 50257.
+		self assert: naiveId equals: blasColdId.
+		self assertTrue: maxDiff < 1.0e-2.
+	] ensure: [
+		(model matmulBackend isKindOf: GcBlasBackend) ifTrue: [ model matmulBackend clearWeightCache ].
+		model useNaiveBackend ].
+	^ result
+]
+
 { #category : 'prompts' }
 GcGpt2InferenceExamples >> franceInContextPromptIds [
 	"Token ids for 'The capital of France is Paris. The capital of France is' -- the fact stated once, then re-primed, so greedy induction yields ' Paris'."
