@@ -64,10 +64,10 @@ GcConceptProbe >> printOn: aStream [
 	aStream nextPutAll: self class name; nextPutAll: '('; nextPutAll: (word ifNil: [ '?' ]); nextPutAll: ')'
 ]
 
-{ #category : 'probing' }
+{ #category : 'accessing' }
 GcConceptProbe >> promptIds [
-	"The GPT-2 byte-level BPE token ids of the prompt text (no model, no network)."
-	^ GcTokenizer gpt2 encode: self promptText
+	"The prompt text encoded with the MODEL'S tokenizer (no network). Asking the model -- not the global gpt2 tokenizer -- keeps the probe correct for any model whose vocabulary differs."
+	^ model tokenizer encode: self promptText
 ]
 
 { #category : 'probing' }
@@ -105,9 +105,9 @@ GcConceptProbe >> template: aTemplate [
 	template := aTemplate
 ]
 
-{ #category : 'probing' }
+{ #category : 'private' }
 GcConceptProbe >> topEntriesFromLogits: logitsArray probs: probsArray k: k [
-	"The k highest-logit tokens as GcLogitLensEntry objects, most likely first. Linear top-k selection (O(n*k)) reusing the GcLogitLens idiom -- NEVER asSortedCollection over the 50k vocab. Decodes ids via the shared GcGpt2Decoder."
+	"The k highest-logit tokens as GcLogitLensEntry objects, most likely first. Linear top-k selection (O(n*k)) reusing the GcLogitLens idiom -- NEVER asSortedCollection over the 50k vocab. Decodes ids via the MODEL'S decoder (not a global) so other-vocab models label tokens correctly."
 	| best decoder |
 	best := OrderedCollection new.
 	1 to: logitsArray size do: [ :i |
@@ -122,7 +122,7 @@ GcConceptProbe >> topEntriesFromLogits: logitsArray probs: probsArray k: k [
 					inserted := true ] ].
 			inserted ifFalse: [ best addLast: i ].
 			best size > k ifTrue: [ best removeLast ] ] ].
-	decoder := GcGpt2Decoder default.
+	decoder := model decoder.
 	^ best withIndexCollect: [ :idx :r |
 		| id |
 		id := idx - 1.

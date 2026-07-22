@@ -44,6 +44,27 @@ GcConceptSpaceExamples >> defaultGpt2ConceptSpaceExample [
 ]
 
 { #category : 'examples' }
+GcConceptSpaceExamples >> probeAllWithStubModelExample [
+	<gtExample>
+	"HERMETIC proof of the probeable-model seam: GcBehavioralConceptSpace runs end-to-end against GcProbeableStubModel -- no weights, no network, no GPT-2 tokenizer/decoder. This is the contract another engine (or the Python/Modal bridge) implements to reuse the whole concept explorer. Suite-runnable (no <noTest>)."
+	| space results |
+	space := GcBehavioralConceptSpace
+		words: #('dog' 'king')
+		template: GcConceptProbe defaultTemplate
+		model: GcProbeableStubModel new
+		concepts: GcConceptSpace defaultConcepts.
+	results := space probeAll.
+	self assert: results size equals: 2.
+	results do: [ :r |
+		self assert: r entries notEmpty description: 'probe produced top-k entries'.
+		self assert: (r entries allSatisfy: [ :e | e tokenText beginsWith: '<t' ])
+			description: 'tokens decoded via the STUB decoder, not the gpt2 global'.
+		self assert: (r entries allSatisfy: [ :e | e prob isNaN not ])
+			description: 'finite probs' ].
+	^ space
+]
+
+{ #category : 'examples' }
 GcConceptSpaceExamples >> syntheticConceptAtlasExample [
 	<gtExample>
 	"gtAtlasFor:'s element builds as a BlElement with one point per member word and one distinct color per concept."

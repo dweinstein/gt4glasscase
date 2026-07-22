@@ -309,6 +309,12 @@ GcGpt2Model >> decodeWeight: aName [
 ]
 
 { #category : 'accessing' }
+GcGpt2Model >> decoder [
+	"The token-id decoder matching this model's vocabulary (see tokenizer)."
+	^ GcGpt2Decoder default
+]
+
+{ #category : 'accessing' }
 GcGpt2Model >> eps [
 	^ eps
 ]
@@ -592,6 +598,12 @@ GcGpt2Model >> tensorIndex [
 { #category : 'weights' }
 GcGpt2Model >> tensorNamed: aName [
 	^ self tensorIndex at: aName ifAbsent: [ self error: 'No tensor named ', aName ]
+]
+
+{ #category : 'accessing' }
+GcGpt2Model >> tokenizer [
+	"The tokenizer matching this model's vocabulary. Probes and generation helpers must ask the MODEL (not a global) so a future checkpoint/engine with a different vocab plugs in without touching callers."
+	^ GcTokenizer gpt2
 ]
 
 { #category : 'forward pass' }

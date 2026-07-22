@@ -227,8 +227,8 @@ GcBehavioralConceptSpace >> printOn: aStream [
 
 { #category : 'running' }
 GcBehavioralConceptSpace >> probeAll [
-	"Run ONE short forward per word (each with a fresh KV cache -- the shared model stays clean) and store a GcConceptProbeResult per word, matched against this space's concepts. Heavy-demo path: opts the model into the Accelerate BLAS backend when available (seconds instead of minutes; falls back to naive kernels elsewhere). The float32 weight buffers stay warm for repeat probes; free them with the model's unloadWeights or useNaiveBackend."
-	self model useBlasBackendIfAvailable.
+	"Run ONE short forward per word (each with a fresh KV cache -- the shared model stays clean) and store a GcConceptProbeResult per word, matched against this space's concepts. Heavy-demo path: opts the model into the Accelerate BLAS backend when the model supports it (seconds instead of minutes; guarded respondsTo: so stub or non-GPT-2 probeable models work too). The float32 weight buffers stay warm for repeat probes; free them with the model's unloadWeights or useNaiveBackend."
+	(self model respondsTo: #useBlasBackendIfAvailable) ifTrue: [ self model useBlasBackendIfAvailable ].
 	results := self words collect: [ :w |
 		| r |
 		r := (GcConceptProbe word: w template: self template model: self model) run.
