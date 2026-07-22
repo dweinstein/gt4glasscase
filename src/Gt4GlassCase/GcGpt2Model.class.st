@@ -490,7 +490,9 @@ GcGpt2Model >> matmulBackend [
 
 { #category : 'accessing' }
 GcGpt2Model >> matmulBackend: aBackendOrClass [
-	"Set the per-layer Conv1D linear backend directly (GcTensorMath or a GcBlasBackend instance). Prefer useBlasBackend / useNaiveBackend for the common cases."
+	"Set the per-layer Conv1D linear backend directly (GcTensorMath or a GcBlasBackend instance). Prefer useBlasBackend / useNaiveBackend for the common cases. If the outgoing backend is a GcBlasBackend and is being replaced by a genuinely different object, its cached float32 weight buffers are freed first (native memory, NOT GC-reclaimed), so an arbitrary reassignment cannot strand them."
+	(matmulBackend isKindOf: GcBlasBackend) ifTrue: [
+		matmulBackend == aBackendOrClass ifFalse: [ matmulBackend clearWeightCache ] ].
 	matmulBackend := aBackendOrClass
 ]
 
