@@ -618,6 +618,16 @@ GcGpt2Model >> useBlasBackend [
 ]
 
 { #category : 'api - backend' }
+GcGpt2Model >> useBlasBackendIfAvailable [
+	"Opt into the Accelerate BLAS backend when it works on this platform; silently stay on the naive kernels otherwise. This is the entry point for HEAVY DEMO paths (concept probing, generation demos) where speed matters and no exact value is asserted -- correctness and differential examples keep the naive float64 oracle, and exact-token-asserting examples stay naive too (a near-tie logit can flip argmax at float32). The probe backend caches nothing on failure (isAvailable uses the uncached matmulA: path)."
+	| candidate |
+	(matmulBackend isKindOf: GcBlasBackend) ifTrue: [ ^ self ].
+	candidate := GcBlasBackend new.
+	candidate isAvailable ifTrue: [ matmulBackend := candidate ].
+	^ self
+]
+
+{ #category : 'api - backend' }
 GcGpt2Model >> useNaiveBackend [
 	"Switch the per-layer Conv1D linears back to the naive GcTensorMath kernels (the default). Frees the outgoing GcBlasBackend's cached float32 weight buffers first (native memory, NOT GC-reclaimed), so switching backends does not strand hundreds of MB."
 	(matmulBackend isKindOf: GcBlasBackend) ifTrue: [ matmulBackend clearWeightCache ].
