@@ -617,7 +617,8 @@ GcGpt2Model >> useBlasBackend [
 
 { #category : 'api - backend' }
 GcGpt2Model >> useNaiveBackend [
-	"Switch the per-layer Conv1D linears back to the naive GcTensorMath kernels (the default)."
+	"Switch the per-layer Conv1D linears back to the naive GcTensorMath kernels (the default). Frees the outgoing GcBlasBackend's cached float32 weight buffers first (native memory, NOT GC-reclaimed), so switching backends does not strand hundreds of MB."
+	(matmulBackend isKindOf: GcBlasBackend) ifTrue: [ matmulBackend clearWeightCache ].
 	matmulBackend := GcTensorMath.
 	^ self
 ]

@@ -46,52 +46,54 @@ GcBlasBackend >> isAvailable [
 		do: [ :e | false ]
 ]
 
-{ #category : 'api - matmul' }
+{ #category : 'computing' }
 GcBlasBackend >> matmulA: a rows: m inner: k b: b cols: n [
-	"DROP-IN BLAS-backed replacement for GcTensorMath matmulA:rows:inner:b:cols:. C[m,n] = A[m,k] . B[k,n], row-major Float64Array in and out. Converts A and B to fresh temporary float32 buffers every call (general-purpose, UNcached); see mmulNoTransposeInput:inSize:weight:outSize:bias: for the weight-cached GPT-2 Conv1D path."
-	| aBuf bBuf cBuf result |
-	aBuf := self doubleArrayToFloatBuffer: a.
-	bBuf := self doubleArrayToFloatBuffer: b.
-	cBuf := FFIExternalArray externalNewType: 'float' size: m * n.
-	self
-		sgemmOrder: 101 ta: 111 tb: 111
-		m: m n: n k: k
-		alpha: 1.0
-		a: aBuf getHandle lda: k
-		b: bBuf getHandle ldb: n
-		beta: 0.0
-		c: cBuf getHandle ldc: n.
-	result := self floatBufferToDoubleArray: cBuf size: m * n.
-	aBuf free.
-	bBuf free.
-	cBuf free.
-	^ result
+	"DROP-IN BLAS-backed replacement for GcTensorMath matmulA:rows:inner:b:cols:. C[m,n] = A[m,k] . B[k,n], row-major Float64Array in and out. Converts A and B to fresh temporary float32 buffers every call (general-purpose, UNcached); see mmulNoTransposeInput:inSize:weight:outSize:bias: for the weight-cached GPT-2 Conv1D path. The temporary buffers are freed in an ensure: block, so a mid-call error (conversion or sgemm) cannot leak native memory."
+	| aBuf bBuf cBuf |
+	aBuf := bBuf := cBuf := nil.
+	^ [ aBuf := self doubleArrayToFloatBuffer: a.
+		bBuf := self doubleArrayToFloatBuffer: b.
+		cBuf := FFIExternalArray externalNewType: 'float' size: m * n.
+		self
+			sgemmOrder: 101 ta: 111 tb: 111
+			m: m n: n k: k
+			alpha: 1.0
+			a: aBuf getHandle lda: k
+			b: bBuf getHandle ldb: n
+			beta: 0.0
+			c: cBuf getHandle ldc: n.
+		self floatBufferToDoubleArray: cBuf size: m * n ]
+	ensure: [
+		aBuf ifNotNil: [ aBuf free ].
+		bBuf ifNotNil: [ bBuf free ].
+		cBuf ifNotNil: [ cBuf free ] ]
 ]
 
-{ #category : 'api - matmul' }
+{ #category : 'computing' }
 GcBlasBackend >> mmulNoTransposeInput: x inSize: inSize weight: w outSize: outSize bias: bias [
-	"DROP-IN BLAS-backed replacement for GcTensorMath mmulNoTransposeInput:inSize:weight:outSize:bias: (GPT-2 Conv1D, y = x . W + bias, NO transpose). x is a length-inSize Float64Array (one row); W is Float64Array [inSize,outSize] row-major; bias may be nil. m=1, n=outSize, k=inSize. The float32 buffer for W is CACHED by identity of w in weightBuffers -- GPT-2 weights are stable objects reused every forward pass, so only x is converted per call."
-	| wBuf xBuf cBuf result beta |
+	"DROP-IN BLAS-backed replacement for GcTensorMath mmulNoTransposeInput:inSize:weight:outSize:bias: (GPT-2 Conv1D, y = x . W + bias, NO transpose). x is a length-inSize Float64Array (one row); W is Float64Array [inSize,outSize] row-major; bias may be nil. m=1, n=outSize, k=inSize. The float32 buffer for W is CACHED by identity of w in weightBuffers -- GPT-2 weights are stable objects reused every forward pass, so only x is converted per call. The per-call temp buffers (xBuf, cBuf) are freed in an ensure: block; the cached wBuf is NOT freed here (owned by weightBuffers, released by clearWeightCache)."
+	| wBuf xBuf cBuf beta |
+	xBuf := cBuf := nil.
 	wBuf := self weightBuffers at: w ifAbsentPut: [ self doubleArrayToFloatBuffer: w ].
-	xBuf := self doubleArrayToFloatBuffer: x.
-	cBuf := FFIExternalArray externalNewType: 'float' size: outSize.
-	beta := 0.0.
-	bias ifNotNil: [
-		beta := 1.0.
-		1 to: outSize do: [ :j | cBuf at: j put: (bias at: j) ] ].
-	beta = 0.0 ifTrue: [ 1 to: outSize do: [ :j | cBuf at: j put: 0.0 ] ].
-	self
-		sgemmOrder: 101 ta: 111 tb: 111
-		m: 1 n: outSize k: inSize
-		alpha: 1.0
-		a: xBuf getHandle lda: inSize
-		b: wBuf getHandle ldb: outSize
-		beta: beta
-		c: cBuf getHandle ldc: outSize.
-	result := self floatBufferToDoubleArray: cBuf size: outSize.
-	xBuf free.
-	cBuf free.
-	^ result
+	^ [ xBuf := self doubleArrayToFloatBuffer: x.
+		cBuf := FFIExternalArray externalNewType: 'float' size: outSize.
+		beta := 0.0.
+		bias ifNotNil: [
+			beta := 1.0.
+			1 to: outSize do: [ :j | cBuf at: j put: (bias at: j) ] ].
+		beta = 0.0 ifTrue: [ 1 to: outSize do: [ :j | cBuf at: j put: 0.0 ] ].
+		self
+			sgemmOrder: 101 ta: 111 tb: 111
+			m: 1 n: outSize k: inSize
+			alpha: 1.0
+			a: xBuf getHandle lda: inSize
+			b: wBuf getHandle ldb: outSize
+			beta: beta
+			c: cBuf getHandle ldc: outSize.
+		self floatBufferToDoubleArray: cBuf size: outSize ]
+	ensure: [
+		xBuf ifNotNil: [ xBuf free ].
+		cBuf ifNotNil: [ cBuf free ] ]
 ]
 
 { #category : 'ffi - blas' }
