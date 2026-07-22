@@ -82,6 +82,19 @@ GcBehavioralConceptComparison >> gtModelRunsFor: aView [
 		send: [ :r | r ]
 ]
 
+{ #category : 'actions' }
+GcBehavioralConceptComparison >> gtRunProbesActionFor: anAction [
+	<gtAction>
+	"Toolbar button to execute the probes when inspecting a not-yet-run comparison (e.g. straight from defaultGpt2Family). Guarded: a second click is a no-op. HONEST WARNING in the tooltip: the full gpt2 family loads each model sequentially and the image is single-threaded, so the UI freezes for the duration (~2 min for gpt2/distilgpt2 each, ~18 min for gpt2-medium's cold f64 decode). Fires the view update wish so the open Agreement/Overlap/Models views refresh in place with the results."
+	^ anAction button
+		tooltip: 'Run the probes now (no-op if already run). Freezes the UI while models load + probe sequentially -- minutes for small models, ~18 min if gpt2-medium is included.';
+		priority: 5;
+		icon: BrGlamorousVectorIcons play;
+		action: [ :aButton |
+			self isRun ifFalse: [ self run ].
+			aButton phlow fireViewUpdateWish ]
+]
+
 { #category : 'gt views' }
 GcBehavioralConceptComparison >> gtTopKOverlapFor: aView [
 	<gtView>
@@ -97,6 +110,12 @@ GcBehavioralConceptComparison >> gtTopKOverlapFor: aView [
 	list column: 'Jaccard' text: [ :r | (r at: 4) printShowingDecimalPlaces: 3 ].
 	list send: [ :r | self wordComparisonNamed: (r at: 1) ].
 	^ list
+]
+
+{ #category : 'testing' }
+GcBehavioralConceptComparison >> isRun [
+	"Whether the probes have been executed. runs is initialized to an empty collection, so emptiness -- not nil -- is the test."
+	^ runs notNil and: [ runs notEmpty ]
 ]
 
 { #category : 'accessing' }
