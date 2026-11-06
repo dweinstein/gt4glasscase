@@ -18,6 +18,43 @@ GcInterpretabilityExamples >> assertTrue: aBoolean [
 	aBoolean ifFalse: [ self error: 'assertion failed' ]
 ]
 
+{ #category : 'examples' }
+GcInterpretabilityExamples >> attentionHeadRolesExample [
+	<gtExample>
+	<noTest>
+	"Score every GPT-2-124M attention head (12 layers x 12 heads) on the France prompt for two textbook roles, then rank them.
+	- Previous-token score: mean attention from each query position q (2..12) to key q-1.
+	- Induction score: in the repeated half ('capital of France is' recurs 7 positions after its first occurrence), mean attention from queries 9..12 to key q-6 -- the token that FOLLOWED the current token last time ('is' -> ' Paris').
+	Asserts the top previous-token head is L4H11 (with L2H2 second) and that L5H5 and L6H9 are in the top-5 induction heads: the previous-token and induction heads Wang et al. 2022 (IOI circuit, arXiv:2211.00593) identified in GPT-2 small. Heads are { layer. head } with 0-based indices as in GcAttentionHead. One 12-token prompt: a demonstration, not a head census. <noTest>: loads ~500MB of weights."
+	| model ids trace scores byPrev byInd result |
+	model := GcGpt2Model default.
+	ids := self franceInContextPromptIds.
+	trace := model tracedForwardTokenIds: ids level: #full.
+	scores := OrderedCollection new.
+	trace layerRecords do: [ :rec |
+		rec attentionHeads do: [ :h |
+			| prev ind |
+			prev := ((2 to: ids size) inject: 0 into: [ :sum :q | sum + (h weightAtQuery: q key: q - 1) ]) / (ids size - 1).
+			ind := ((9 to: 12) inject: 0 into: [ :sum :q | sum + (h weightAtQuery: q key: q - 6) ]) / 4.
+			scores add: { { h layerIndex. h headIndex }. prev. ind } ] ].
+	self assert: scores size equals: 144.
+	byPrev := (scores asSortedCollection: [ :a :b | (a at: 2) >= (b at: 2) ]) asArray.
+	byInd := (scores asSortedCollection: [ :a :b | (a at: 3) >= (b at: 3) ]) asArray.
+	self assert: byPrev first first equals: #(4 11).
+	self assertTrue: (byPrev first at: 2) > 0.9.
+	self assert: (byPrev at: 2) first equals: #(2 2).
+	self assertTrue: (((byInd first: 5) collect: [ :x | x first ]) includes: #(5 5)).
+	self assertTrue: (((byInd first: 5) collect: [ :x | x first ]) includes: #(6 9)).
+	result := Dictionary new.
+	result
+		at: #previousTokenRanking put: (byPrev first: 10);
+		at: #inductionRanking put: (byInd first: 10);
+		at: #topPreviousTokenHead put: byPrev first first;
+		at: #topInductionHead put: byInd first first.
+	model unloadWeights.
+	^ result
+]
+
 { #category : 'fixtures' }
 GcInterpretabilityExamples >> floats: anArray [
 	^ Float64Array withAll: (anArray collect: [ :x | x asFloat ])

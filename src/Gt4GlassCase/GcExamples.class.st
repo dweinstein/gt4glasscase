@@ -2140,8 +2140,8 @@ GcExamples >> verdictRateWilsonIntervalIsExact [
 	expUpper := center + half.
 	self assert: (rate wilsonLower - expLower) abs < 1e-9.
 	self assert: (rate wilsonUpper - expUpper) abs < 1e-9.
-	self assert: (rate wilsonLower closeTo: 0.4901568).
-	self assert: (rate wilsonUpper closeTo: 0.9433191).
+	self assert: (rate wilsonLower - 0.4901568) abs < 1e-6.
+	self assert: (rate wilsonUpper - 0.9433191) abs < 1e-6.
 	self assert: rate wilsonLower < rate proportion.
 	self assert: rate proportion < rate wilsonUpper.
 	^ rate

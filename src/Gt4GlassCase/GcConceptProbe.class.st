@@ -32,6 +32,12 @@ GcConceptProbe class >> word: aWord template: aTemplate model: aModel [
 	^ self new setWord: aWord template: aTemplate model: aModel
 ]
 
+{ #category : 'accessing' }
+GcConceptProbe >> decoder [
+	"The id decoder of the probed model; with no model (hermetic use) fall back to the GPT-2 decoder."
+	^ model ifNil: [ GcGpt2Decoder default ] ifNotNil: [ :m | m decoder ]
+]
+
 { #category : 'gt - views' }
 GcConceptProbe >> gtDetailsFor: aView [
 	<gtView>
@@ -66,8 +72,8 @@ GcConceptProbe >> printOn: aStream [
 
 { #category : 'accessing' }
 GcConceptProbe >> promptIds [
-	"The prompt text encoded with the MODEL'S tokenizer (no network). Asking the model -- not the global gpt2 tokenizer -- keeps the probe correct for any model whose vocabulary differs."
-	^ model tokenizer encode: self promptText
+	"The prompt text encoded with the MODEL'S tokenizer (no network). Asking the model -- not the global gpt2 tokenizer -- keeps the probe correct for any model whose vocabulary differs; with no model it falls back to GPT-2 (see #tokenizer)."
+	^ self tokenizer encode: self promptText
 ]
 
 { #category : 'probing' }
@@ -105,6 +111,12 @@ GcConceptProbe >> template: aTemplate [
 	template := aTemplate
 ]
 
+{ #category : 'accessing' }
+GcConceptProbe >> tokenizer [
+	"The tokenizer of the probed model; with no model (hermetic use) fall back to the GPT-2 tokenizer."
+	^ model ifNil: [ GcTokenizer gpt2 ] ifNotNil: [ :m | m tokenizer ]
+]
+
 { #category : 'private' }
 GcConceptProbe >> topEntriesFromLogits: logitsArray probs: probsArray k: k [
 	"The k highest-logit tokens as GcLogitLensEntry objects, most likely first. Linear top-k selection (O(n*k)) reusing the GcLogitLens idiom -- NEVER asSortedCollection over the 50k vocab. Decodes ids via the MODEL'S decoder (not a global) so other-vocab models label tokens correctly."
@@ -122,7 +134,7 @@ GcConceptProbe >> topEntriesFromLogits: logitsArray probs: probsArray k: k [
 					inserted := true ] ].
 			inserted ifFalse: [ best addLast: i ].
 			best size > k ifTrue: [ best removeLast ] ] ].
-	decoder := model decoder.
+	decoder := self decoder.
 	^ best withIndexCollect: [ :idx :r |
 		| id |
 		id := idx - 1.
